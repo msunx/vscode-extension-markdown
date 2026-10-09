@@ -1,0 +1,165 @@
+{
+  "name": "folio-markdown",
+  "displayName": "Folio · Markdown Preview",
+  "description": "暮色底色与多彩语义排版的 Markdown 预览，支持标题分色、一键编辑切换与交互式 Todo。",
+  "version": "0.3.0",
+  "publisher": "muyang",
+  "author": {
+    "name": "muyang"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/msunx/vscode-extension-markdown.git"
+  },
+  "homepage": "https://github.com/msunx/vscode-extension-markdown#readme",
+  "bugs": {
+    "url": "https://github.com/msunx/vscode-extension-markdown/issues"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "markdown",
+    "preview",
+    "theme",
+    "cursor",
+    "folio"
+  ],
+  "icon": "media/icon.png",
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "onLanguage:markdown"
+  ],
+  "extensionDependencies": [
+    "vscode.markdown-language-features"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
+  },
+  "scripts": {
+    "check": "node --check src/extension.js && node --check src/markdown.js && node --check media/preview.js && node --check src/preview.js",
+    "package": "vsce package --allow-missing-repository --out folio-markdown-0.3.0.vsix"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "folio.preview",
+        "title": "Folio 预览（可勾选 Todo）",
+        "category": "Folio",
+        "icon": "$(book)"
+      },
+      {
+        "command": "folio.edit",
+        "title": "Folio 返回编辑",
+        "category": "Folio",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "folio.toggle",
+        "title": "切换编辑 / 预览",
+        "category": "Folio"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "folio.preview",
+          "when": "(editorLangId == markdown && !notebookEditorFocused) || activeWebviewPanelId == 'markdown.preview' || activeCustomEditorId == 'vscode.markdown.preview.editor'",
+          "group": "navigation@-100"
+        },
+        {
+          "command": "folio.edit",
+          "when": "activeWebviewPanelId == 'markdown.preview' || activeCustomEditorId == 'vscode.markdown.preview.editor' || activeCustomEditorId == 'folio.markdownPreview'",
+          "group": "navigation@-100"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "folio.preview",
+          "when": "(editorLangId == markdown && !notebookEditorFocused) || activeWebviewPanelId == 'markdown.preview' || activeCustomEditorId == 'vscode.markdown.preview.editor'"
+        },
+        {
+          "command": "folio.edit",
+          "when": "activeWebviewPanelId == 'markdown.preview' || activeCustomEditorId == 'vscode.markdown.preview.editor' || activeCustomEditorId == 'folio.markdownPreview'"
+        },
+        {
+          "command": "folio.toggle",
+          "when": "editorLangId == markdown || activeWebviewPanelId == 'markdown.preview' || activeCustomEditorId == 'vscode.markdown.preview.editor' || activeCustomEditorId == 'folio.markdownPreview'"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "folio.toggle",
+        "key": "ctrl+alt+v",
+        "mac": "cmd+alt+v",
+        "when": "editorLangId == markdown || activeWebviewPanelId == 'markdown.preview' || activeCustomEditorId == 'vscode.markdown.preview.editor' || activeCustomEditorId == 'folio.markdownPreview'"
+      }
+    ],
+    "markdown.previewStyles": [
+      "./media/preview.css"
+    ],
+    "markdown.previewScripts": [
+      "./media/preview.js"
+    ],
+    "markdown.markdownItPlugins": true,
+    "customEditors": [
+      {
+        "viewType": "folio.markdownPreview",
+        "displayName": "Folio Markdown 预览",
+        "priority": "option",
+        "selector": [
+          {
+            "filenamePattern": "*.md"
+          },
+          {
+            "filenamePattern": "*.markdown"
+          },
+          {
+            "filenamePattern": "*.mdown"
+          },
+          {
+            "filenamePattern": "*.mkd"
+          },
+          {
+            "filenamePattern": "*.mkdn"
+          },
+          {
+            "filenamePattern": "*.mdwn"
+          },
+          {
+            "filenamePattern": "*.markdn"
+          },
+          {
+            "filenamePattern": "*.mdtxt"
+          },
+          {
+            "filenamePattern": "*.mdtext"
+          }
+        ]
+      }
+    ]
+  },
+  "dependencies": {
+    "markdown-it-abbr": "2.0.0",
+    "markdown-it-deflist": "4.0.0",
+    "markdown-it-footnote": "4.0.0",
+    "markdown-it-mark": "4.0.0",
+    "markdown-it-sub": "2.0.0",
+    "markdown-it-sup": "2.0.0",
+    "markdown-it-task-lists": "2.1.1"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "2.6.2",
+    "@vscode/vsce": "4.0.0",
+    "highlight.js": "11.12.0",
+    "markdown-it": "15.0.2"
+  }
+}

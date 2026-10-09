@@ -1,0 +1,38 @@
+# Dependencies and package-manager caches
+node_modules/
+.npm-cache/
+.cache/
+
+# Local builds and verification output
+*.vsix
+.runtime/
+/design/
+/coverage/
+/dist/
+/out/
+*.log
+*.tsbuildinfo
+
+# Local editor / agent state
+.idea/
+.vscode/
+.codex/
+.claude/
+.agents/
+*.swp
+*.swo
+.DS_Store
+._*
+
+# Environment files and credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+.npmrc
+/secrets/
+credentials*.json
+*.pem
+*.key
+*.p12
+*.pfx
