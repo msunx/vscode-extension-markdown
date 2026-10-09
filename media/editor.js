@@ -40,17 +40,29 @@
     }
     if (tag === 'ul' || tag === 'ol') {
       let index = Number(node.getAttribute('start')) || 1;
-      return Array.from(node.children).filter(child => child.tagName === 'LI').map(item => {
+      const items = Array.from(node.children).filter(child => child.tagName === 'LI');
+      const loose = items.some(item => Array.from(item.children).some(child => child.tagName === 'P'));
+      return items.map(item => {
         const marker = tag === 'ol' ? `${index++}. ` : '- ';
         const checkbox = item.querySelector(':scope > input, :scope > p > input');
-        const text = Array.from(item.childNodes).filter(child => !(child instanceof Element && /^(UL|OL)$/.test(child.tagName)))
-          .map(child => child instanceof Element && child.tagName === 'P' ? Array.from(child.childNodes, inline).join('') : inline(child)).join('').trim();
-        const nested = Array.from(item.children).filter(child => /^(UL|OL)$/.test(child.tagName)).map(serialize).join('').trimEnd();
-        return marker + (checkbox ? `[${checkbox.checked ? 'x' : ' '}] ` : '') + text.replace(/\n/g, '\n' + ' '.repeat(marker.length))
-          + (nested ? '\n' + nested.split('\n').map(line => ' '.repeat(marker.length) + line).join('\n') : '');
-      }).join('\n') + '\n\n';
+        // Loose items may have paragraphs before and after child lists; keep those blocks in DOM order.
+        const parts = [];
+        let text = '';
+        const flushText = () => { if (text.trim()) parts.push({ kind: 'inline', text: text.trim() }); text = ''; };
+        for (const child of item.childNodes) {
+          if (child instanceof Element && /^(P|H[1-6]|UL|OL|PRE|BLOCKQUOTE|DIV|HR)$/.test(child.tagName)) {
+            flushText();
+            parts.push({ kind: /^(UL|OL)$/.test(child.tagName) ? 'list' : 'block', text: serialize(child).trim() });
+          } else text += inline(child);
+        }
+        flushText();
+        const body = parts.map((part, i) => (i ? part.kind === 'list' && parts[i - 1].kind === 'inline' ? '\n' : '\n\n' : '') + part.text).join('');
+        const lines = ((checkbox ? `[${checkbox.checked ? 'x' : ' '}] ` : '') + body).split('\n');
+        return marker + lines.map((line, i) => i && line ? ' '.repeat(marker.length) + line : line).join('\n');
+      }).join(loose ? '\n\n' : '\n') + '\n\n';
     }
-    if (tag === 'blockquote') return Array.from(node.childNodes, serialize).join('').trimEnd().split('\n').map(line => '> ' + line).join('\n') + '\n\n';
+    if (tag === 'blockquote') return Array.from(node.childNodes).filter(child => child.nodeType !== Node.TEXT_NODE || child.textContent.trim())
+      .map(serialize).join('').trimEnd().split('\n').map(line => '> ' + line).join('\n') + '\n\n';
     if (tag === 'hr') return '---\n\n';
     if (tag === 'div' && !Array.from(node.children).some(child => /^(P|H[1-6]|UL|OL|PRE|BLOCKQUOTE|DIV|HR)$/.test(child.tagName))) return inline(node) + '\n\n';
     return Array.from(node.childNodes, serialize).join('');
@@ -74,6 +86,7 @@
     const main = document.querySelector('.markdown-body');
     const pending = new Map();
     const waiters = [];
+    const listExits = [];
     let source = '', writable = true, active = null, deferred = null, sequence = 0, composing = false, conflicted = false, menuState = null;
     let historyVersion = 0, historyCaret = null;
     const menu = document.createElement('div');
@@ -148,11 +161,20 @@
       if (!block || !open(block)) return;
       active.input.focus({ preventScroll: true });
       if (active.raw) { const offset = Math.min(saved.offset, active.input.value.length); active.input.setSelectionRange(offset, offset); return; }
+      if (saved.afterList) {
+        // Empty paragraphs have no Markdown token; recreate the writing position when undo/redo returns here.
+        const list = active.content.querySelector(':scope > ul, :scope > ol');
+        if (list) {
+          const paragraph = document.createElement('p'); paragraph.append(document.createElement('br')); list.after(paragraph);
+          active.lastHTML = active.content.innerHTML; caretEnd(paragraph); return;
+        }
+        caretEnd(active.content); return;
+      }
       if (Number.isInteger(saved.listItem) && saved.listItem >= 0) {
         const items = Array.from(active.content.querySelectorAll('li')), item = items[Math.min(saved.listItem, items.length - 1)];
         if (item) {
-          let offset = saved.itemOffset;
           const nodes = ownItemText(item), range = document.createRange();
+          let offset = saved.listItem >= items.length ? nodes.reduce((length, node) => length + node.textContent.length, 0) : saved.itemOffset;
           range.selectNodeContents(item); range.collapse(true);
           for (const node of nodes) {
             range.setStart(node, Math.min(offset, node.textContent.length)); range.collapse(true);
@@ -199,7 +221,7 @@
     function caretEnd(element) {
       const leaf = Array.from(element.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, code')).at(-1) || element;
       const range = document.createRange(); range.selectNodeContents(leaf); range.collapse(false);
-      if (leaf.lastChild?.nodeName === 'BR') range.setStartBefore(leaf.lastChild);
+      if (leaf.lastChild?.nodeName === 'BR') { range.setStartBefore(leaf.lastChild); range.collapse(true); }
       const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); element.closest('[contenteditable]')?.focus();
     }
     function resize() { if (active?.raw) { active.input.style.height = 'auto'; active.input.style.height = `${Math.max(70, active.input.scrollHeight)}px`; } }
@@ -257,7 +279,13 @@
       if (message.type === 'save-result') { if (!message.ok) showError(message.error); else feedback('已保存'); return true; }
       if (message.type !== 'content') return false;
       if ((message.historyVersion || 0) > historyVersion) {
-        historyCaret = captureCaret(); historyVersion = message.historyVersion;
+        historyCaret = captureCaret();
+        for (const exit of [...listExits].reverse()) {
+          if (message.historyReason === 'undo' && source === exit.after && message.source === exit.before) { historyCaret = exit.beforeCaret; break; }
+          if (message.source === exit.after && (message.historyReason === 'redo' && source === exit.before
+            || message.historyReason === 'undo' && source !== exit.before)) { historyCaret = exit.afterCaret; break; }
+        }
+        historyVersion = message.historyVersion;
         closeMenu(); active = null; deferred = null; composing = false; conflicted = false; pending.clear();
         recovery.hidden = true; host.setState({ ...state(), draft: null }); showError(''); feedback(''); settle();
         return false;
@@ -289,6 +317,49 @@
       if (line.tagName === 'P' && line.parentElement.tagName === 'LI') line = line.parentElement;
       const range = selection.getRangeAt(0).cloneRange(); range.selectNodeContents(line); range.setEnd(selection.anchorNode, selection.anchorOffset);
       return { line, before: range.toString(), range: selection.getRangeAt(0).cloneRange() };
+    }
+    function enterList() {
+      if (active.raw || conflicted || !writable) return false;
+      const selection = window.getSelection();
+      if (!selection.isCollapsed || !selection.rangeCount) return false;
+      const node = selection.anchorNode?.nodeType === Node.ELEMENT_NODE ? selection.anchorNode : selection.anchorNode?.parentElement;
+      const item = node?.closest('li');
+      if (!item || !active.content.contains(item) || node.closest('pre, blockquote')) return false;
+      const empty = !item.textContent.trim() && !item.querySelector('ul, ol, img, pre, table, hr');
+      if (empty) {
+        // Chromium's native empty-item Enter can lift the previous child list out of its parent.
+        // Remove only the empty item and place a plain paragraph after the complete list.
+        let root = item.parentElement;
+        while (root.parentElement.tagName === 'LI') root = root.parentElement.parentElement;
+        const before = source, beforeCaret = captureCaret();
+        const preceding = Array.from(active.content.childNodes).slice(0, Array.from(active.content.childNodes).indexOf(root)).map(serialize).join('');
+        const afterCaret = { start: active.start + (active.prefix + preceding).replace(/\r?\n/g, eol()).length, raw: false, afterList: true };
+        const paragraph = document.createElement('p'); paragraph.append(document.createElement('br')); root.after(paragraph);
+        let container = item.parentElement;
+        item.remove();
+        while (container !== active.content && !container.textContent.trim() && !container.querySelector('li, input, img')) {
+          const parent = container.parentElement; container.remove(); container = parent;
+        }
+        active.content.focus(); caretEnd(paragraph); sync();
+        listExits.push({ before, after: source, beforeCaret, afterCaret });
+        if (listExits.length > 16) listExits.shift();
+        return true;
+      }
+      const after = selection.getRangeAt(0).cloneRange(); after.selectNodeContents(item); after.setStart(selection.anchorNode, selection.anchorOffset);
+      const remaining = after.cloneContents(); remaining.querySelectorAll('ul, ol').forEach(list => list.remove());
+      if (remaining.textContent.trim() || remaining.querySelector('img, pre, table, hr')) return false;
+      const next = document.createElement('li');
+      const paragraph = item.querySelector(':scope > p') ? document.createElement('p') : next;
+      if (paragraph !== next) next.append(paragraph);
+      let text = paragraph;
+      if (item.querySelector(':scope > input, :scope > p > input')) {
+        next.className = 'task-list-item';
+        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.className = 'task-list-item-checkbox';
+        checkbox.setAttribute('aria-label', '完成：待办');
+        text = document.createElement('label'); text.className = 'folio-task-label'; paragraph.append(checkbox, text);
+      }
+      text.append(document.createElement('br')); item.after(next);
+      active.content.focus(); caretEnd(text); sync(); return true;
     }
     function changeListLevel(outdent) {
       if (active.raw || conflicted || !writable) return false;
@@ -475,7 +546,9 @@
         else if (event.key === 'Escape') { event.preventDefault(); closeMenu(); }
         return;
       }
-      if (event.key === 'Enter' && !event.shiftKey && !active.raw) {
+      if (event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !active.raw
+        && !event.target.closest('input, button, textarea, select')) {
+        if (enterList()) { event.preventDefault(); event.stopPropagation(); closeMenu(); return; }
         const location = lineAtCaret();
         if (location && /^H[1-6]$/.test(location.line.tagName) && window.getSelection().isCollapsed && location.before === location.line.textContent) {
           event.preventDefault(); const p = document.createElement('p'); p.append(document.createElement('br')); location.line.after(p); caretEnd(p); sync(); return;

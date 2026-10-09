@@ -88,7 +88,7 @@ function addEditableBlocks(md) {
         && !/(<\/?[a-z!]|\[\^|\]\s*\[|\$|^\s*>?\s*\[!|\*\[|!\[)/im.test(source)
         && !(Object.keys(state.env.references || {}).length && /\[[^\]]+\](?!\()/.test(source))
         && !state.tokens.slice(i, end + 1).some(item => ['fence', 'code_block', 'table_open', 'html_block'].includes(item.type)
-          || (['bullet_list_open', 'ordered_list_open'].includes(token.type) && item.type === 'paragraph_open' && !item.hidden) || item.children?.some(child => ['link_open', 'image'].includes(child.type) && child.meta?.isReference));
+          || item.children?.some(child => ['link_open', 'image'].includes(child.type) && child.meta?.isReference));
       const open = new state.Token('folio_block_open', 'section', 1);
       open.meta = { start: token.map[0], end: finish, mode: rich ? 'rich' : 'source', kind: token.tag || token.type };
       output.push(open, ...state.tokens.slice(i, end + 1), new state.Token('folio_block_close', 'section', -1));

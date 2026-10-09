@@ -70,6 +70,7 @@ class PreviewProvider {
     let timer;
     let revision = 0;
     let historyVersion = 0;
+    let historyReason;
     let queue = Promise.resolve();
     const flushRequests = new Map();
     this.flushers.set(panel, () => new Promise(resolve => {
@@ -89,7 +90,8 @@ class PreviewProvider {
           catch { return match; }
         });
         if (disposed || request !== revision || version !== document.version) return;
-        await panel.webview.postMessage({ type: 'content', html, version, historyVersion, source: document.getText(), writable: vscode.workspace.fs.isWritableFileSystem(document.uri.scheme) !== false, error: error || '' });
+        await panel.webview.postMessage({ type: 'content', html, version, historyVersion, historyReason, source: document.getText(),
+          writable: vscode.workspace.fs.isWritableFileSystem(document.uri.scheme) !== false, error: error || '' });
       } catch {
         if (!disposed) await panel.webview.postMessage({ type: 'error', error: '预览加载失败，请返回编辑后重新打开。' });
       }
@@ -140,7 +142,9 @@ class PreviewProvider {
       }),
       vscode.workspace.onDidChangeTextDocument(event => {
         if (event.document !== document) return;
-        if (event.reason === vscode.TextDocumentChangeReason.Undo || event.reason === vscode.TextDocumentChangeReason.Redo) historyVersion = document.version;
+        if (event.reason === vscode.TextDocumentChangeReason.Undo || event.reason === vscode.TextDocumentChangeReason.Redo) {
+          historyVersion = document.version; historyReason = event.reason === vscode.TextDocumentChangeReason.Undo ? 'undo' : 'redo';
+        }
         clearTimeout(timer);
         timer = setTimeout(() => void render(), 40);
       })

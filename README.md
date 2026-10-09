@@ -28,7 +28,7 @@ npm run check
 npm run package
 ```
 
-1. 在 Cursor 命令面板执行 **Extensions: Install from VSIX**，选择 `folio-markdown-0.4.5.vsix`。
+1. 在 Cursor 命令面板执行 **Extensions: Install from VSIX**，选择 `folio-markdown-0.4.7.vsix`。
 2. 执行 **Developer: Reload Window**，打开任意 Markdown 文件。
 3. 点击右上角的**书本按钮**「Folio 编辑预览」。点击**铅笔按钮**返回源码，也可用 `⌘⌥V` 切换。
 
@@ -36,7 +36,7 @@ npm run package
 
 ## 在预览里写作
 
-点击标题、正文、紧凑列表或引用即可编辑。在空行输入 `/` 或 `、`，选择标题、列表、任务、代码、引用、分隔线、链接、图片或表格；继续输入 `/h2`、`、任务` 等关键词筛选。
+点击标题、正文、列表或引用即可编辑。在空行输入 `/` 或 `、`，选择标题、列表、任务、代码、引用、分隔线、链接、图片或表格；继续输入 `/h2`、`、任务` 等关键词筛选。
 
 <p align="center">
   <img src="./assets/readme/editing.png" width="100%" alt="Folio 就地编辑：输入斜杠后出现模块菜单，支持关键词筛选和键盘选择">
@@ -59,11 +59,15 @@ Windows / Linux 对应使用 `Ctrl+Alt+V` 切换、`Ctrl+/` 打开菜单、`Ctrl
 
 ## 用列表整理思路
 
+列表项之间留有空行、包含多个段落或嵌套任务时，点击文字仍保持可视化编辑，不会因为空行切换成整段 Markdown 源码。
+
 **在列表文字中按 `Tab`，当前项连同子项成为前一项的子列表；`Shift+Tab` 退一级。** 无序、有序、混合列表和 Todo 都适用，选中连续同级项可以一起调整。
 
 <p align="center">
   <img src="./assets/readme/lists.png" width="720" alt="多级列表：蓝、青绿、桃色的标记和圆角连接线区分父子关系，有序列表与嵌套 Todo 使用相同层级规则">
 </p>
+
+列表项末尾按 `Enter` 新建同级项；在空项上再按 `Enter`，退出整个列表并开始普通正文。已有内容和子项层级保持不变，新建 Todo 默认未完成。
 
 同级第一项没有可归属的前项，顶层也不能再退级，这两种情况保持原位。按 `Esc` 结束编辑后，`Tab` 恢复焦点导航。
 
@@ -92,7 +96,7 @@ Windows / Linux 对应使用 `Ctrl+Alt+V` 切换、`Ctrl+/` 打开菜单、`Ctrl
 ## 兼容与边界
 
 - 已在 **macOS / Cursor** 验证，扩展声明支持 VS Code API `^1.90.0`；其他平台尚未实测。
-- 代码、表格、HTML、公式、松散列表等复杂区块在原位置展开 Markdown 编辑框，保留原始语法；列表 `Tab` 层级操作用于可视化编辑状态。
+- 代码、表格、HTML、公式等复杂区块在原位置展开 Markdown 编辑框，保留原始语法；列表 `Tab` 层级操作用于可视化编辑状态。
 - 原生 Markdown 预览使用 Folio 样式，但保持只读。点击 **Folio 书本按钮**进入可编辑预览。
 - 源文件被其他编辑同时修改时，保留草稿并提示处理；只读或过期请求不会覆盖原文，保存失败会保留未保存内容。
 - 文档内脚本不会执行；Mermaid 当前按代码块展示。
