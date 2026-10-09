@@ -6,6 +6,7 @@
   const host = interactive ? acquireVsCodeApi() : null;
   let version;
   let pendingTask = null;
+  let editor;
 
   function taskSelector(task) {
     return `input[data-folio-task-line="${task.line}"][data-folio-task-character="${task.character}"]`;
@@ -19,8 +20,8 @@
   }
 
   if (host) {
-    window.addEventListener('message', event => {
-      const message = event.data;
+    function applyMessage(message, force = false) {
+      if (!force && editor?.receive(message)) return;
       if (message?.type === 'error') {
         if (pendingTask) {
           const checkbox = document.querySelector(taskSelector(pendingTask));
@@ -45,17 +46,22 @@
       main.querySelectorAll('details').forEach((element, index) => { if (openDetails[index] !== undefined) element.open = openDetails[index]; });
       version = message.version;
       pendingTask = null;
-      enhanceContent();
       showError(message.error);
+      editor?.attach(message);
+      enhanceContent();
       const checkbox = focusedTask && main.querySelector(taskSelector(focusedTask));
       checkbox?.focus({ preventScroll: true });
       window.scrollTo(0, scroll);
       if (checkbox && oldTaskTop !== undefined) window.scrollBy(0, checkbox.getBoundingClientRect().top - oldTaskTop);
-    });
-    window.addEventListener('scroll', () => host.setState({ scroll: window.scrollY }), { passive: true });
+    }
+    editor = window.FolioEditor?.({ host, showError, applyContent: message => applyMessage(message, true), enhance: enhanceContent });
+    window.addEventListener('message', event => applyMessage(event.data));
+    window.addEventListener('scroll', () => host.setState({ ...host.getState(), scroll: window.scrollY }), { passive: true });
     document.addEventListener('change', event => {
       const checkbox = event.target;
-      if (!(checkbox instanceof HTMLInputElement) || !checkbox.matches('[data-folio-task-line]')) return;
+      if (!(checkbox instanceof HTMLInputElement) || !checkbox.matches('.task-list-item-checkbox')) return;
+      if (editor?.handleTask(checkbox)) return;
+      if (!checkbox.hasAttribute('data-folio-task-line') || (editor && !editor.allowTask(checkbox))) return;
       if (pendingTask || version === undefined) return;
       pendingTask = {
         type: 'task', version, line: Number(checkbox.dataset.folioTaskLine), character: Number(checkbox.dataset.folioTaskCharacter),
@@ -66,7 +72,7 @@
       host.postMessage(pendingTask);
     });
     document.addEventListener('dblclick', event => {
-      if (!(event.target instanceof Element) || event.target.closest('a, button, input, summary')) return;
+      if (!event.altKey || editor?.editing || !(event.target instanceof Element) || event.target.closest('a, button, input, summary')) return;
       const line = event.target.closest('[data-line]')?.getAttribute('data-line');
       if (line !== null && line !== undefined) host.postMessage({ type: 'source', line: Number(line) });
     });
@@ -134,6 +140,7 @@
     document.querySelectorAll('input.task-list-item-checkbox').forEach(checkbox => {
       const item = checkbox.closest('li.task-list-item');
       if (!item) return;
+      if (editor?.owns(checkbox)) { checkbox.disabled = !editor.allowTask(checkbox); item.classList.toggle('folio-task-complete', checkbox.checked); return; }
       if (!checkbox.id) checkbox.id = `folio-task-${checkbox.dataset.folioTaskLine || 'readonly'}-${Array.from(document.querySelectorAll('.task-list-item-checkbox')).indexOf(checkbox)}`;
       if (!checkbox.nextElementSibling?.classList.contains('folio-task-label')) {
         const label = document.createElement('label');
@@ -149,7 +156,7 @@
       }
       // Nested task states must not mark their parent task as completed.
       item.classList.toggle('folio-task-complete', checkbox.checked);
-      checkbox.disabled = !host || version === undefined || !checkbox.hasAttribute('data-folio-task-line') || Boolean(pendingTask);
+      checkbox.disabled = !host || version === undefined || !checkbox.hasAttribute('data-folio-task-line') || Boolean(pendingTask) || Boolean(editor && !editor.allowTask(checkbox));
       checkbox.classList.toggle('is-pending', Boolean(pendingTask && Number(checkbox.dataset.folioTaskLine) === pendingTask.line));
       const label = checkbox.nextElementSibling?.textContent.trim() || '待办';
       checkbox.setAttribute('aria-label', `${checkbox.checked ? '取消完成' : '完成'}：${label}`);

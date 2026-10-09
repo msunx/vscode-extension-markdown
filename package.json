@@ -1,8 +1,8 @@
 {
   "name": "folio-markdown",
   "displayName": "Folio · Markdown Preview",
-  "description": "暮色底色与多彩语义排版的 Markdown 预览，支持标题分色、一键编辑切换与交互式 Todo。",
-  "version": "0.3.0",
+  "description": "暮色多彩 Markdown 编辑预览，支持就地编辑、斜杠模块菜单与交互式 Todo。",
+  "version": "0.4.5",
   "publisher": "muyang",
   "author": {
     "name": "muyang"
@@ -44,14 +44,14 @@
     "virtualWorkspaces": true
   },
   "scripts": {
-    "check": "node --check src/extension.js && node --check src/markdown.js && node --check media/preview.js && node --check src/preview.js",
-    "package": "vsce package --allow-missing-repository --out folio-markdown-0.3.0.vsix"
+    "check": "node --check src/extension.js && node --check src/markdown.js && node --check media/preview.js && node --check src/preview.js && node --check media/editor.js",
+    "package": "vsce package --allow-missing-repository --out folio-markdown-0.4.5.vsix"
   },
   "contributes": {
     "commands": [
       {
         "command": "folio.preview",
-        "title": "Folio 预览（可勾选 Todo）",
+        "title": "Folio 编辑预览",
         "category": "Folio",
         "icon": "$(book)"
       },

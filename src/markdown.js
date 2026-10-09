@@ -59,6 +59,50 @@ function taskMarker(line) {
   return /^((?:[ \t]*(?:>[ \t]?|(?:[-+*]|\d+[.)])[ \t]+))+)\[([ xX])\](?=[ \t]|$)/.exec(line);
 }
 
+function addEditableBlocks(md) {
+  md.core.ruler.push('folio_editable_blocks', state => {
+    const output = [];
+    const lines = state.src.split('\n');
+    for (let i = 0; i < state.tokens.length; i++) {
+      const token = state.tokens[i];
+      if (!token.map || token.level !== 0 || token.nesting === -1 || token.type === 'inline') { output.push(token); continue; }
+      let end = i;
+      if (token.nesting === 1) {
+        let depth = 1;
+        while (++end < state.tokens.length) { depth += state.tokens[end].nesting; if (!depth) break; }
+      } else if (token.type === 'html_block') {
+        const tag = /^\s*<(details|div|section|table|figure|article)\b/i.exec(token.content)?.[1];
+        if (tag) {
+          let depth = 0;
+          for (let j = i; j < state.tokens.length; j++) {
+            for (const match of state.tokens[j].type === 'html_block' ? state.tokens[j].content.matchAll(new RegExp(`<(/?)${tag}\\b[^>]*>`, 'gi')) : []) depth += match[1] ? -1 : 1;
+            end = j;
+            if (depth <= 0) break;
+          }
+        }
+      }
+      if (end >= state.tokens.length) { output.push(token); continue; }
+      const finish = Math.max(token.map[1], ...state.tokens.slice(i, end + 1).map(item => item.map?.[1] || 0));
+      const source = lines.slice(token.map[0], finish).join('\n');
+      const rich = ['paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open', 'blockquote_open'].includes(token.type)
+        && !/(<\/?[a-z!]|\[\^|\]\s*\[|\$|^\s*>?\s*\[!|\*\[|!\[)/im.test(source)
+        && !(Object.keys(state.env.references || {}).length && /\[[^\]]+\](?!\()/.test(source))
+        && !state.tokens.slice(i, end + 1).some(item => ['fence', 'code_block', 'table_open', 'html_block'].includes(item.type)
+          || (['bullet_list_open', 'ordered_list_open'].includes(token.type) && item.type === 'paragraph_open' && !item.hidden) || item.children?.some(child => ['link_open', 'image'].includes(child.type) && child.meta?.isReference));
+      const open = new state.Token('folio_block_open', 'section', 1);
+      open.meta = { start: token.map[0], end: finish, mode: rich ? 'rich' : 'source', kind: token.tag || token.type };
+      output.push(open, ...state.tokens.slice(i, end + 1), new state.Token('folio_block_close', 'section', -1));
+      i = end;
+    }
+    state.tokens = output;
+  });
+  md.renderer.rules.folio_block_open = (tokens, index) => {
+    const block = tokens[index].meta;
+    return `<section class="folio-block" data-start-line="${block.start}" data-end-line="${block.end}" data-edit-mode="${block.mode}" data-kind="${block.kind}"><div class="folio-block-content">`;
+  };
+  md.renderer.rules.folio_block_close = () => '</div></section>\n';
+}
+
 function extendMarkdownIt(md) {
   if (md[installed]) return md;
   md[installed] = true;
@@ -85,6 +129,7 @@ function extendMarkdownIt(md) {
   const closeTable = md.renderer.rules.table_close || ((tokens, index, options, env, self) => self.renderToken(tokens, index, options));
   md.renderer.rules.table_open = (...args) => `<div class="folio-table" tabindex="0" role="region" aria-label="表格，可横向滚动">${openTable(...args)}`;
   md.renderer.rules.table_close = (...args) => `${closeTable(...args)}</div>`;
+  addEditableBlocks(md);
   return md;
 }
 

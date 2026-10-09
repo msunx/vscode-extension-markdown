@@ -6,17 +6,17 @@
 
 ## 快速开始
 
-使用 **Node.js 22**，在项目根目录依次执行以下命令。首次启动前，将 `.env.example` 复制为 `.env.local`。
+使用 **Node.js 22**，在项目根目录依次执行以下命令，生成 Folio 的 VSIX 安装包。
 
 ```bash
-npm install
-cp .env.example .env.local
-npm run dev
+npm ci
+npm run check
+npm run package
 ```
 
 ### 定义应用配置
 
-配置集中在 `app.config.ts` 中。保持字段命名清楚，让默认值表达意图。
+下面的 TypeScript 片段用于展示代码高亮。它不代表 Folio 的可配置项。
 
 ```typescript
 export const config = {
@@ -36,9 +36,11 @@ export const config = {
 - [ ] 检查窄窗口下的表格与代码块
 - [ ] 补充本次变更说明
 
-## 配置说明
+## 表格排版
 
-| 字段 | 默认值 | 说明 |
+以下表格展示对齐与边框样式，数值用于排版演示。
+
+| 字段 | 示例值 | 说明 |
 | :--- | :--- | :--- |
 | `theme` | `twilight` | 文档的预览主题 |
 | `maxWidth` | `760` | 正文最大宽度，单位 px |

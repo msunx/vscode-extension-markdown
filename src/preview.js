@@ -19,14 +19,36 @@ async function updateTask(document, message) {
   if (!await vscode.workspace.applyEdit(edit)) throw new Error('未能修改待办，请检查文档是否可写后重试。');
 }
 
+async function updateBlock(document, message) {
+  if (document.languageId !== 'markdown' || typeof message.base !== 'string' || typeof message.text !== 'string'
+    || !Number.isInteger(message.start) || !Number.isInteger(message.end) || message.start < 0 || message.end < message.start || message.end > message.base.length) throw new Error('无法定位编辑内容，草稿已保留。');
+  if (vscode.workspace.fs.isWritableFileSystem(document.uri.scheme) === false) throw new Error('文档为只读，未写入。草稿已保留，可复制后保存到其他文件。');
+  if (document.getText() !== message.base) throw new Error('源文件已被其他编辑更新，未覆盖原文。请复制草稿后重新载入。');
+  const before = message.base.slice(message.start, message.end);
+  let prefix = 0;
+  while (prefix < before.length && prefix < message.text.length && before[prefix] === message.text[prefix]) prefix++;
+  let suffix = 0;
+  while (suffix < before.length - prefix && suffix < message.text.length - prefix && before[before.length - 1 - suffix] === message.text[message.text.length - 1 - suffix]) suffix++;
+  if (prefix === before.length && prefix === message.text.length) return;
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(document.uri, new vscode.Range(document.positionAt(message.start + prefix), document.positionAt(message.end - suffix)), message.text.slice(prefix, message.text.length - suffix));
+  if (!await vscode.workspace.applyEdit(edit)) throw new Error('文档写入失败，草稿已保留，请检查文件权限。');
+}
+
 class PreviewProvider {
   constructor(context) {
     this.context = context;
     this.documents = new Map();
+    this.flushers = new Map();
   }
 
   get activeDocument() {
     for (const [panel, document] of this.documents) if (panel.active) return document;
+  }
+
+  async flushActive() {
+    for (const [panel, flush] of this.flushers) if (panel.active) return flush();
+    return true;
   }
 
   async resolveCustomTextEditor(document, panel) {
@@ -44,9 +66,18 @@ class PreviewProvider {
         ...(vscode.workspace.workspaceFolders || []).map(folder => folder.uri)]
     };
     let disposed = false;
+    let ready = false;
     let timer;
     let revision = 0;
+    let historyVersion = 0;
     let queue = Promise.resolve();
+    const flushRequests = new Map();
+    this.flushers.set(panel, () => new Promise(resolve => {
+      const id = randomBytes(8).toString('hex');
+      const timeout = setTimeout(() => { flushRequests.delete(id); resolve(false); }, 8000);
+      flushRequests.set(id, success => { clearTimeout(timeout); resolve(success); });
+      if (ready) void panel.webview.postMessage({ type: 'flush', id });
+    }));
     const render = async error => {
       clearTimeout(timer);
       const request = ++revision;
@@ -58,7 +89,7 @@ class PreviewProvider {
           catch { return match; }
         });
         if (disposed || request !== revision || version !== document.version) return;
-        await panel.webview.postMessage({ type: 'content', html, version, error: error || '' });
+        await panel.webview.postMessage({ type: 'content', html, version, historyVersion, source: document.getText(), writable: vscode.workspace.fs.isWritableFileSystem(document.uri.scheme) !== false, error: error || '' });
       } catch {
         if (!disposed) await panel.webview.postMessage({ type: 'error', error: '预览加载失败，请返回编辑后重新打开。' });
       }
@@ -66,7 +97,34 @@ class PreviewProvider {
     const listeners = [
       panel.webview.onDidReceiveMessage(message => {
         if (!message || typeof message !== 'object') return;
-        if (message.type === 'ready') void render();
+        if (message.type === 'ready') {
+          ready = true; void render();
+          for (const id of flushRequests.keys()) void panel.webview.postMessage({ type: 'flush', id });
+        }
+        if (message.type === 'edit') {
+          queue = queue.then(async () => {
+            try {
+              if ((message.historyVersion || 0) >= historyVersion) await updateBlock(document, message);
+              if (!disposed) await panel.webview.postMessage({ type: 'edit-result', id: message.id, ok: true, version: document.version });
+            } catch (error) {
+              if (!disposed) await panel.webview.postMessage({ type: 'edit-result', id: message.id, ok: false, historyVersion, error: error.message });
+            }
+            if (!disposed) { clearTimeout(timer); timer = setTimeout(() => void render(), 40); }
+          }).catch(() => {});
+        }
+        if (message.type === 'save') {
+          queue = queue.then(async () => {
+            try {
+              const ok = await document.save();
+              if (!disposed) await panel.webview.postMessage({ type: 'save-result', ok, error: ok ? '' : '保存失败，编辑内容仍在文档中。请检查文件权限。' });
+            } catch {
+              if (!disposed) await panel.webview.postMessage({ type: 'save-result', ok: false, error: '保存失败，编辑内容仍在文档中。请检查文件权限。' });
+            }
+          }).catch(() => {});
+        }
+        if (message.type === 'flushed' && flushRequests.has(message.id)) {
+          queue = queue.then(() => { flushRequests.get(message.id)?.(message.ok === true); flushRequests.delete(message.id); });
+        }
         if (message.type === 'task') {
           queue = queue.then(async () => {
             if (disposed) return;
@@ -82,6 +140,7 @@ class PreviewProvider {
       }),
       vscode.workspace.onDidChangeTextDocument(event => {
         if (event.document !== document) return;
+        if (event.reason === vscode.TextDocumentChangeReason.Undo || event.reason === vscode.TextDocumentChangeReason.Redo) historyVersion = document.version;
         clearTimeout(timer);
         timer = setTimeout(() => void render(), 40);
       })
@@ -91,6 +150,9 @@ class PreviewProvider {
       clearTimeout(timer);
       listeners.forEach(listener => listener.dispose());
       this.documents.delete(panel);
+      this.flushers.delete(panel);
+      for (const resolve of flushRequests.values()) resolve(false);
+      flushRequests.clear();
     });
     panel.webview.html = this.page(document, panel.webview, extensions);
   }
@@ -103,15 +165,14 @@ class PreviewProvider {
     styles.push(`<link rel="stylesheet" href="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/preview.css'))}">`);
     const config = vscode.workspace.getConfiguration('markdown', document.uri);
     const fontSize = config.get('preview.fontSize');
-    const fontFamily = config.get('preview.fontFamily');
-    const customStyle = [Number.isFinite(fontSize) && fontSize > 0 ? `--markdown-font-size:${fontSize}px;` : '',
-      typeof fontFamily === 'string' ? `--markdown-font-family:${fontFamily.replace(/[<>;{}]/g, '')};` : ''].join('');
+    const customStyle = Number.isFinite(fontSize) && fontSize > 0 ? `--markdown-font-size:${fontSize}px;` : '';
     styles.push(`<style>:root{${customStyle}}</style>`);
     const policy = `default-src 'none'; img-src ${webview.cspSource} https: data:; media-src ${webview.cspSource} https:; `
       + `style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}'; form-action 'none';`;
     return '<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
       + `<meta http-equiv="Content-Security-Policy" content="${escape(policy)}"><base href="${resource(document.uri)}">${styles.join('')}`
       + '</head><body data-folio-interactive="true"><div class="folio-status" role="status" aria-live="polite" hidden></div><main class="markdown-body" dir="auto"></main>'
+      + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/editor.js'))}"></script>`
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/preview.js'))}"></script></body></html>`;
   }
 
@@ -128,4 +189,4 @@ class PreviewProvider {
   }
 }
 
-module.exports = { PreviewProvider, viewType, updateTask };
+module.exports = { PreviewProvider, viewType, updateTask, updateBlock };

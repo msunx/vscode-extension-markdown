@@ -39,6 +39,7 @@ async function returnToEditor() {
   if (!isMarkdownPreview()) return false;
   const document = previews.activeDocument;
   if (document) {
+    if (!await previews.flushActive()) { vscode.window.showWarningMessage('预览中还有未同步的草稿，请先处理预览里的提示。'); return false; }
     await vscode.commands.executeCommand('vscode.openWith', document.uri, 'default', vscode.window.tabGroups.activeTabGroup.viewColumn);
     return true;
   }
