@@ -113,10 +113,11 @@
     }, 3000);
   }
 
-  document.addEventListener('click', event => {
+  function handleClick(event) {
     if (!(event.target instanceof Element)) return;
+    if (event.type === 'auxclick' && event.button !== 1) return;
     const button = event.target.closest('.folio-copy');
-    if (button) {
+    if (button && event.type === 'click') {
       event.preventDefault();
       event.stopPropagation();
       void copyCode(button);
@@ -126,11 +127,18 @@
     if (link) {
       const href = link.getAttribute('href');
       event.preventDefault();
+      // Cursor's window-level link handler ignores defaultPrevented and would also open the resource URL externally.
+      event.stopPropagation();
       if (href.startsWith('#')) {
         try { document.getElementById(decodeURIComponent(href.slice(1)))?.scrollIntoView(); } catch { /* Ignore malformed anchors. */ }
-      } else host.postMessage({ type: 'link', href: link.getAttribute('data-href') || href });
+      } else {
+        const target = link.getAttribute('data-href') || href;
+        void (editor ? editor.flush() : Promise.resolve(true)).then(ok => { if (ok) host.postMessage({ type: 'link', href: target }); });
+      }
     }
-  });
+  }
+  document.addEventListener('click', handleClick);
+  document.addEventListener('auxclick', handleClick);
 
   function enhanceContent() {
     document.querySelectorAll('.folio-copy:not([data-folio-ready])').forEach(button => {

@@ -3,6 +3,7 @@
 const vscode = require('vscode');
 const { randomBytes } = require('node:crypto');
 const { taskMarker } = require('./markdown');
+const { pickProjectFile } = require('./files');
 const viewType = 'folio.markdownPreview';
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 
@@ -78,6 +79,7 @@ class PreviewProvider {
     let revision = 0;
     let rendering;
     let bufferedContent;
+    let filePicker;
     let historyVersion = 0;
     let historyReason;
     let queue = Promise.resolve();
@@ -156,6 +158,20 @@ class PreviewProvider {
             catch (error) { await render(error.message); }
           }).catch(() => {});
         }
+        if (message.type === 'pick-file' && Number.isInteger(message.id) && !filePicker) {
+          const cancellation = new vscode.CancellationTokenSource(); filePicker = cancellation;
+          void (async () => {
+            let result;
+            try { result = await pickProjectFile(document, cancellation.token); }
+            catch { result = { error: '无法选择文件，请确认此文档已保存到打开的项目中，且项目文件可访问。' }; }
+            finally { cancellation.cancel(); cancellation.dispose(); if (filePicker === cancellation) filePicker = undefined; }
+            if (!disposed) {
+              if (panel.active) panel.reveal(panel.viewColumn);
+              await panel.webview.postMessage({ type: 'file-result', id: message.id, ...result });
+            }
+          })();
+        }
+        if (message.type === 'cancel-pick-file') filePicker?.cancel();
         if (message.type === 'link' && typeof message.href === 'string') void this.openLink(document, message.href, panel.viewColumn);
         if (message.type === 'source' && Number.isInteger(message.line)) {
           void vscode.window.showTextDocument(document, { viewColumn: panel.viewColumn, selection: new vscode.Range(Math.max(0, Math.min(message.line, document.lineCount - 1)), 0,
@@ -173,6 +189,7 @@ class PreviewProvider {
     ];
     panel.onDidDispose(() => {
       disposed = true;
+      filePicker?.cancel();
       bufferedContent = undefined;
       clearTimeout(timer);
       listeners.forEach(listener => listener.dispose());
@@ -212,7 +229,7 @@ class PreviewProvider {
       const folder = vscode.workspace.getWorkspaceFolder(document.uri)?.uri;
       const uri = href.startsWith('/') && folder ? vscode.Uri.joinPath(folder, href) : vscode.Uri.parse(new URL(href, document.uri.toString()).href);
       if (!['file', document.uri.scheme].includes(uri.scheme)) return;
-      if (/\.(md|markdown|mdown|mkd|mkdn)$/i.test(uri.path)) await vscode.commands.executeCommand('vscode.openWith', uri, viewType, column);
+      if (/\.(md|markdown|mdown|mkd|mkdn|mdwn|markdn|mdtxt|mdtext)$/i.test(uri.path)) await vscode.commands.executeCommand('vscode.openWith', uri, viewType, column);
       else await vscode.commands.executeCommand('vscode.open', uri, column);
     } catch { vscode.window.showWarningMessage('无法打开此链接，请检查目标路径。'); }
   }
