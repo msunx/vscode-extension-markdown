@@ -47,8 +47,8 @@
       version = message.version;
       pendingTask = null;
       showError(message.error);
-      editor?.attach(message);
       enhanceContent();
+      editor?.attach(message);
       const checkbox = focusedTask && main.querySelector(taskSelector(focusedTask));
       checkbox?.focus({ preventScroll: true });
       window.scrollTo(0, scroll);
@@ -153,6 +153,11 @@
           sibling = next;
         }
         checkbox.after(label);
+      }
+      const taskText = checkbox.nextElementSibling;
+      if (Array.from(taskText.childNodes).every(node => node.nodeType === Node.TEXT_NODE && !node.textContent.trim())) {
+        // A real empty line lets Chromium place a caret after the checkbox on a fresh render.
+        taskText.replaceChildren(document.createElement('br'));
       }
       // Nested task states must not mark their parent task as completed.
       item.classList.toggle('folio-task-complete', checkbox.checked);

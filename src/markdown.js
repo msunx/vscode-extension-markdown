@@ -35,6 +35,15 @@ function addAlerts(md) {
 }
 
 function addTasks(md) {
+  md.core.ruler.before('github-task-lists', 'folio_empty_tasks', state => {
+    for (let i = 2; i < state.tokens.length; i++) {
+      const token = state.tokens[i];
+      if (token.type !== 'inline' || state.tokens[i - 1].type !== 'paragraph_open' || state.tokens[i - 2].type !== 'list_item_open') continue;
+      if (!/^\[[ xX]\]$/.test(token.content) || token.children?.length !== 1 || token.children[0].type !== 'text') continue;
+      // Markdown-it trims the trailing space of an empty task; restore it only for the task renderer.
+      token.content += ' '; token.children[0].content += ' ';
+    }
+  });
   md.core.ruler.after('github-task-lists', 'folio_task_locations', state => {
     const lines = state.src.split('\n');
     for (const token of state.tokens) {

@@ -28,7 +28,7 @@ npm run check
 npm run package
 ```
 
-1. 在 Cursor 命令面板执行 **Extensions: Install from VSIX**，选择 `folio-markdown-0.4.7.vsix`。
+1. 在 Cursor 命令面板执行 **Extensions: Install from VSIX**，选择 `folio-markdown-0.4.10.vsix`。
 2. 执行 **Developer: Reload Window**，打开任意 Markdown 文件。
 3. 点击右上角的**书本按钮**「Folio 编辑预览」。点击**铅笔按钮**返回源码，也可用 `⌘⌥V` 切换。
 
@@ -67,11 +67,13 @@ Windows / Linux 对应使用 `Ctrl+Alt+V` 切换、`Ctrl+/` 打开菜单、`Ctrl
   <img src="./assets/readme/lists.png" width="720" alt="多级列表：蓝、青绿、桃色的标记和圆角连接线区分父子关系，有序列表与嵌套 Todo 使用相同层级规则">
 </p>
 
-列表项末尾按 `Enter` 新建同级项；在空项上再按 `Enter`，退出整个列表并开始普通正文。已有内容和子项层级保持不变，新建 Todo 默认未完成。
+列表项末尾按 `Enter` 新建同级项；在空项上再按 `Enter`，退出整个列表并开始普通正文。已有内容和子项层级保持不变，新建 Todo 默认未完成。Todo 文字删空后，再按 `Backspace` 删除空项；光标回到前一项，没有同级前项时回到父项。
 
 同级第一项没有可归属的前项，顶层也不能再退级，这两种情况保持原位。按 `Esc` 结束编辑后，`Tab` 恢复焦点导航。
 
 点击 Todo 复选框，`[ ]` / `[x]` 会同步写回原文；点击任务文字可以继续编辑。复选框支持键盘聚焦和空格切换，保存、撤销、重做与普通编辑一致。
+
+空 Todo 关闭预览后重新打开，仍可点击勾选框右侧继续输入，或按 `Backspace` 删除空项。
 
 ## 让颜色和字体帮助阅读
 

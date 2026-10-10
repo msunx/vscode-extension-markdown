@@ -191,7 +191,8 @@ body {
 }
 .markdown-body li > :is(ul, ol) > li:first-child::before { top: -12px; height: calc(.875em + 12px); }
 .markdown-body li > :is(ul, ol) > li:not(:last-child)::after { top: .875em; bottom: -6px; }
-.markdown-body li.task-list-item { list-style: none; }
+.markdown-body li.task-list-item { list-style: none; min-height: 1.75em; }
+.markdown-body li.task-list-item > p:first-child { min-height: 1.75em; }
 .markdown-body li > :is(ul, ol) > li.task-list-item::before { width: 18px; }
 .markdown-body .task-list-item-checkbox {
   position: absolute;
@@ -216,6 +217,9 @@ body {
 .markdown-body .folio-task-complete { color: color-mix(in srgb, var(--folio-green) 60%, var(--folio-muted)); }
 .markdown-body input:checked + .folio-task-label { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--folio-green) 45%, var(--folio-bg)); }
 .markdown-body .folio-task-label { display: inline; padding: 4px 0; cursor: pointer; }
+/* Reserve an empty parent's text line before its nested list without adding editable text. */
+.markdown-body .folio-task-label::before { content: ''; display: inline-block; width: 0; height: 1em; }
+.markdown-body .folio-task-label:has(> br:only-child) { display: inline-block; min-width: 2em; }
 .markdown-body .task-list-item ul, .markdown-body .task-list-item ol { color: var(--folio-fg); }
 .markdown-body .task-list-item-checkbox:hover:not(:disabled) { border-color: var(--folio-green); box-shadow: 0 0 0 3px #a6da9518; }
 .markdown-body .task-list-item-checkbox:active:not(:disabled) { transform: scale(.9); }

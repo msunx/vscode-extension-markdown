@@ -56,7 +56,8 @@
           } else text += inline(child);
         }
         flushText();
-        const body = parts.map((part, i) => (i ? part.kind === 'list' && parts[i - 1].kind === 'inline' ? '\n' : '\n\n' : '') + part.text).join('');
+        let body = parts.map((part, i) => (i ? part.kind === 'list' && parts[i - 1].kind === 'inline' ? '\n' : '\n\n' : '') + part.text).join('');
+        if (checkbox && parts[0]?.kind === 'list') body = '\n' + body;
         const lines = ((checkbox ? `[${checkbox.checked ? 'x' : ' '}] ` : '') + body).split('\n');
         return marker + lines.map((line, i) => i && line ? ' '.repeat(marker.length) + line : line).join('\n');
       }).join(loose ? '\n\n' : '\n') + '\n\n';
@@ -86,7 +87,7 @@
     const main = document.querySelector('.markdown-body');
     const pending = new Map();
     const waiters = [];
-    const listExits = [];
+    const listEdits = [];
     let source = '', writable = true, active = null, deferred = null, sequence = 0, composing = false, conflicted = false, menuState = null;
     let historyVersion = 0, historyCaret = null;
     const menu = document.createElement('div');
@@ -121,7 +122,7 @@
         const content = block.querySelector('.folio-block-content');
         if (writable) { content.tabIndex = 0; content.setAttribute('aria-label', '编辑此内容'); }
       }
-      if (writable && !source.trim()) appendEmptyBlock();
+      if (writable && !source.trim() && !historyCaret?.emptyBlock) insertEmptyBlock();
       if (historyCaret) { restoreCaret(historyCaret); historyCaret = null; }
       if (state().draft?.markdown && !pending.size && !active) { recovery.hidden = false; showError('有一份未同步的草稿，可复制后继续编辑，或放弃草稿并刷新。'); }
     }
@@ -155,6 +156,7 @@
       return nodes;
     }
     function restoreCaret(saved) {
+      if (saved.emptyBlock) { insertEmptyBlock(saved.start, saved.end); return; }
       const blocks = Array.from(main.querySelectorAll('.folio-block'));
       const block = blocks.find(item => Number(item.dataset.sourceStart) === saved.start)
         || blocks.find(item => Number(item.dataset.sourceStart) <= saved.start && Number(item.dataset.sourceEnd) > saved.start) || blocks.at(-1);
@@ -174,6 +176,8 @@
         const items = Array.from(active.content.querySelectorAll('li')), item = items[Math.min(saved.listItem, items.length - 1)];
         if (item) {
           const nodes = ownItemText(item), range = document.createRange();
+          const label = item.querySelector(':scope > .folio-task-label, :scope > p > .folio-task-label');
+          if (!nodes.length && label) { caretEnd(label); return; }
           let offset = saved.listItem >= items.length ? nodes.reduce((length, node) => length + node.textContent.length, 0) : saved.itemOffset;
           range.selectNodeContents(item); range.collapse(true);
           for (const node of nodes) {
@@ -223,6 +227,18 @@
       const range = document.createRange(); range.selectNodeContents(leaf); range.collapse(false);
       if (leaf.lastChild?.nodeName === 'BR') { range.setStartBefore(leaf.lastChild); range.collapse(true); }
       const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); element.closest('[contenteditable]')?.focus();
+    }
+    function focusEmptyTask(event) {
+      for (const checkbox of active.content.querySelectorAll('input.task-list-item-checkbox')) {
+        const label = checkbox.nextElementSibling;
+        if (!label?.matches('.folio-task-label') || label.textContent.trim() || label.querySelector(':not(br)')) continue;
+        const item = checkbox.closest('li'), row = item.getBoundingClientRect(), box = checkbox.getBoundingClientRect();
+        const lineHeight = parseFloat(getComputedStyle(item).lineHeight);
+        if (event.clientX < box.right || event.clientX > row.right || event.clientY < row.top || event.clientY >= row.top + lineHeight) continue;
+        if (!label.querySelector('br')) label.replaceChildren(document.createElement('br'));
+        caretEnd(label); return true;
+      }
+      return false;
     }
     function resize() { if (active?.raw) { active.input.style.height = 'auto'; active.input.style.height = `${Math.max(70, active.input.scrollHeight)}px`; } }
     function value() {
@@ -280,10 +296,10 @@
       if (message.type !== 'content') return false;
       if ((message.historyVersion || 0) > historyVersion) {
         historyCaret = captureCaret();
-        for (const exit of [...listExits].reverse()) {
-          if (message.historyReason === 'undo' && source === exit.after && message.source === exit.before) { historyCaret = exit.beforeCaret; break; }
-          if (message.source === exit.after && (message.historyReason === 'redo' && source === exit.before
-            || message.historyReason === 'undo' && source !== exit.before)) { historyCaret = exit.afterCaret; break; }
+        for (const edit of [...listEdits].reverse()) {
+          if (message.historyReason === 'undo' && source === edit.after && message.source === edit.before) { historyCaret = edit.beforeCaret; break; }
+          if (message.source === edit.after && (message.historyReason === 'redo' && source === edit.before
+            || message.historyReason === 'undo' && source !== edit.before)) { historyCaret = edit.afterCaret; break; }
         }
         historyVersion = message.historyVersion;
         closeMenu(); active = null; deferred = null; composing = false; conflicted = false; pending.clear();
@@ -299,15 +315,15 @@
       }
       return false;
     }
-    function appendEmptyBlock() {
+    function insertEmptyBlock(start = source.length, end = start) {
       if (!writable || conflicted || composing) return;
       finish(false);
-      const start = source.length;
       const prefix = source.slice(0, start).endsWith(eol() + eol()) || start === 0 ? '' : source.slice(0, start).endsWith(eol()) ? eol() : eol() + eol();
-      const block = document.createElement('section'); block.className = 'folio-block'; block.dataset.editMode = 'rich'; block.dataset.sourceStart = start; block.dataset.sourceEnd = start;
+      const block = document.createElement('section'); block.className = 'folio-block'; block.dataset.editMode = 'rich'; block.dataset.sourceStart = start; block.dataset.sourceEnd = end;
       block.dataset.prefix = prefix; block.innerHTML = '<div class="folio-block-content"><p><br></p></div>';
-      main.append(block);
-      open(block, true); active.tail = eol() + eol(); return block;
+      const next = Array.from(main.querySelectorAll('.folio-block')).find(item => Number(item.dataset.sourceStart) >= start);
+      main.insertBefore(block, next || null);
+      open(block, true); active.tail ||= eol() + eol(); return block;
     }
     function lineAtCaret() {
       const selection = window.getSelection(); if (!active || active.raw || !selection.rangeCount) return null;
@@ -341,8 +357,7 @@
           const parent = container.parentElement; container.remove(); container = parent;
         }
         active.content.focus(); caretEnd(paragraph); sync();
-        listExits.push({ before, after: source, beforeCaret, afterCaret });
-        if (listExits.length > 16) listExits.shift();
+        rememberListEdit(before, beforeCaret, afterCaret);
         return true;
       }
       const after = selection.getRangeAt(0).cloneRange(); after.selectNodeContents(item); after.setStart(selection.anchorNode, selection.anchorOffset);
@@ -360,6 +375,44 @@
       }
       text.append(document.createElement('br')); item.after(next);
       active.content.focus(); caretEnd(text); sync(); return true;
+    }
+    function rememberListEdit(before, beforeCaret, afterCaret) {
+      listEdits.push({ before, after: source, beforeCaret, afterCaret });
+      if (listEdits.length > 16) listEdits.shift();
+    }
+    function backspaceEmptyTask() {
+      if (active.raw || conflicted || !writable) return false;
+      const selection = window.getSelection();
+      if (!selection.isCollapsed || !selection.rangeCount) return false;
+      const node = selection.anchorNode?.nodeType === Node.ELEMENT_NODE ? selection.anchorNode : selection.anchorNode?.parentElement;
+      const item = node?.closest('li');
+      if (!item || !active.content.contains(item) || !item.querySelector(':scope > input.task-list-item-checkbox, :scope > p > input.task-list-item-checkbox')) return false;
+      if (item.textContent.replace(/[\s\u200b]/g, '') || item.querySelector('ul, ol, img, pre, table, hr, blockquote')) return false;
+      const before = source, beforeCaret = captureCaret(), list = item.parentElement;
+      const previous = item.previousElementSibling;
+      const parent = list.parentElement.tagName === 'LI' ? list.parentElement : null;
+      const target = previous?.querySelectorAll('li').length ? Array.from(previous.querySelectorAll('li')).at(-1) : previous || parent;
+      let paragraph;
+      if (!target) { paragraph = document.createElement('p'); paragraph.append(document.createElement('br')); list.before(paragraph); }
+      // Only remove the empty leaf; keep its parent, siblings and their task states intact.
+      item.remove();
+      if (!list.querySelector(':scope > li')) list.remove();
+      active.content.focus({ preventScroll: true });
+      if (target) {
+        const text = ownItemText(target).at(-1);
+        if (text) {
+          const range = document.createRange(); range.setStart(text, text.textContent.trimEnd().length); range.collapse(true);
+          selection.removeAllRanges(); selection.addRange(range);
+        } else caretEnd(target.querySelector(':scope > p, :scope > label') || target);
+      } else caretEnd(paragraph);
+      sync();
+      const afterCaret = captureCaret();
+      if (paragraph) {
+        afterCaret.emptyBlock = true;
+        afterCaret.end = afterCaret.start + (source.slice(afterCaret.start, active.end).match(/^[\r\n]*/)?.[0].length || 0);
+      }
+      rememberListEdit(before, beforeCaret, afterCaret);
+      return true;
     }
     function changeListLevel(outdent) {
       if (active.raw || conflicted || !writable) return false;
@@ -516,7 +569,10 @@
       if (event.target.closest('input, a, button, summary, textarea')) return;
       const block = event.target.closest('.folio-block');
       if (block) {
-        if (open(block) && active.raw) { event.preventDefault(); active.input.focus(); }
+        if (open(block)) {
+          if (active.raw) { event.preventDefault(); active.input.focus(); }
+          else if (event.button === 0 && !event.shiftKey && focusEmptyTask(event)) event.preventDefault();
+        }
       } else finish();
     });
     main.addEventListener('click', event => {
@@ -535,6 +591,10 @@
       if (event.target.closest?.('.folio-resource-form')) return;
       if (event.key === 'Enter' && event.target.classList?.contains('folio-block-content') && active?.content !== event.target) { event.preventDefault(); open(event.target.closest('.folio-block'), true); return; }
       if (!active) return;
+      if (event.key === 'Backspace' && !event.metaKey && !event.ctrlKey && !event.altKey && event.target.isContentEditable
+        && !event.target.closest('input, button, textarea, select') && backspaceEmptyTask()) {
+        event.preventDefault(); event.stopPropagation(); closeMenu(); return;
+      }
       if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey && event.target.isContentEditable
         && !event.target.closest('input, button, textarea, select') && changeListLevel(event.shiftKey)) {
         event.preventDefault(); event.stopPropagation(); closeMenu(); return;

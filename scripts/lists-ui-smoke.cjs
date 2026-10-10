@@ -30,9 +30,9 @@ const until = async (predicate, label) => {
     if (r.exceptionDetails) throw new Error(r.exceptionDetails.text + ' ' + r.exceptionDetails.exception?.description);
     return r.result.value;
   };
-  const click = async (preview, selector, caret = false) => {
+  const click = async (preview, selector, caret = false, inset = 15) => {
     await evaluate(preview, `d.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'});return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));`);
-    const rect = await evaluate(preview, `const e=d.querySelector(${JSON.stringify(selector)});const r=e.getBoundingClientRect(),f=document.getElementById('active-frame').getBoundingClientRect();return {x:r.x+Math.min(15,r.width/2)+f.x,y:r.y+r.height/2+f.y};`);
+    const rect = await evaluate(preview, `const e=d.querySelector(${JSON.stringify(selector)});const r=e.getBoundingClientRect(),f=document.getElementById('active-frame').getBoundingClientRect();return {x:r.x+Math.min(${inset},r.width/2)+f.x,y:r.y+r.height/2+f.y};`);
     const outer = await page.locator(`iframe[src*="id=${preview.id}"]`).boundingBox();
     await page.mouse.click(outer.x + rect.x, outer.y + rect.y);
     if (caret) await evaluate(preview, `const e=d.querySelector(${JSON.stringify(selector)}),r=d.createRange();r.selectNodeContents(e);r.collapse(false);const s=d.getSelection();s.removeAllRanges();s.addRange(r);`);
@@ -42,8 +42,18 @@ const until = async (predicate, label) => {
   const source = () => JSON.parse(fs.readFileSync(path.join(runtime, 'lists-source.json'))).source.replace(/\r\n/g, '\n');
   const result = { rounds: [] };
   for (let round = 1; round <= 3; round++) {
-    await stage(round); await action('folio.preview').click(); const p = await findPreview(round);
-    await evaluate(p, `d.defaultView.__folioObservedSource=${JSON.stringify(source())};d.defaultView.addEventListener('message',event=>{if(event.data?.type==='content')d.defaultView.__folioObservedSource=event.data.source.replace(/\\r\\n/g,'\\n');});return true;`);
+    await stage(round); await action('folio.preview').click(); let p = await findPreview(round);
+    const observeSource = () => evaluate(p, `d.defaultView.__folioObservedSource=${JSON.stringify(source())};d.defaultView.addEventListener('message',event=>{if(event.data?.type==='content')d.defaultView.__folioObservedSource=event.data.source.replace(/\\r\\n/g,'\\n');});return true;`);
+    await observeSource();
+    const reopen = async () => {
+      const old = p;
+      await page.keyboard.press('Meta+s');
+      await until(() => evaluate(p, "return d.querySelector('.folio-editor-feedback').textContent==='已保存';"), '关闭前保存');
+      await page.locator('.editor-group-container.active .tab.active .tab-actions .codicon-close').click();
+      await action('folio.preview').click(); p = await findPreview(round);
+      assert.notEqual(p.id, old.id, '必须关闭并重建预览，不能复用旧 DOM');
+      await old.session.detach().catch(() => {}); await observeSource();
+    };
     const locate = label => evaluate(p, `for(const e of d.querySelectorAll('li')){const own=Array.from(e.childNodes).filter(n=>!['UL','OL'].includes(n.nodeName)).map(n=>n.textContent).join('').trim();if(own.startsWith(${JSON.stringify(label)})){e.dataset.listTarget='${label}';return true;}}return false;`);
     const target = label => `[data-list-target="${label}"]`;
     const choose = async label => {
@@ -76,6 +86,20 @@ const until = async (predicate, label) => {
       else await synced(p);
     };
     const leave = async () => { await page.keyboard.press('Escape'); await until(() => evaluate(p, `return !d.querySelector('.is-editing') && d.defaultView.__folioObservedSource === ${JSON.stringify(source())};`), '退出并刷新'); };
+    const taskLayout = async (preview = p) => {
+      const rows = await evaluate(preview, `
+        return new Promise(resolve=>d.defaultView.requestAnimationFrame(()=>resolve(Array.from(d.querySelectorAll('.task-list-item-checkbox')).map(box=>{
+          const item=box.closest('li'),rect=box.getBoundingClientRect(),row=item.getBoundingClientRect();
+          return {top:rect.top,bottom:rect.bottom,height:row.height,lineHeight:parseFloat(d.defaultView.getComputedStyle(item).lineHeight)};
+        }))));
+      `);
+      assert(rows.length > 0, '未找到任务行');
+      rows.forEach((row, index) => {
+        assert(row.height >= row.lineHeight - 0.5, `任务 ${index} 的行高塌缩`);
+        if (index) assert(row.top >= rows[index - 1].bottom, `任务 ${index} 与上一行重叠`);
+      });
+    };
+    await taskLayout();
     await choose('子项');
     await changed('Tab', s => s.includes('- 父项\n  - 子项 **重点**\n    - 已有子项'));
     assert.equal(await depth('子项'), 2); assert(await evaluate(p, "return d.activeElement.isContentEditable;"));
@@ -172,6 +196,7 @@ const until = async (predicate, label) => {
         return { sameLevel:item?.parentElement===previous.parentElement,empty:!item?.textContent.trim(),checkbox:!!item?.querySelector('input'),checked:!!item?.querySelector('input')?.checked };
       `);
       assert.deepEqual(first, { sameLevel: true, empty: true, checkbox: scenario.task, checked: false }, label + ' 首次回车应新建同级空项');
+      await taskLayout();
       await key('Enter');
       assert.equal(await depth(label), scenario.depth, label + ' 层级被连带改变');
       assert(source().includes(scenario.markdown), label + ' 已有内容或状态丢失');
@@ -204,14 +229,87 @@ const until = async (predicate, label) => {
       if (scenario.task) assert.equal(await evaluate(p, `return d.querySelector(${JSON.stringify(target(label))}).querySelector('input').checked;`), scenario.checked);
       await leave();
     }
+    const deletions = [
+      { label: '删除中间项', previous: '保留前项' },
+      { label: '删除唯一子项', previous: '唯一父项' },
+      { label: '删除留白子项', previous: '留白保留前项' },
+      { label: '删除首项', previous: null },
+      { label: '删除单独项', previous: null }
+    ];
+    const taskTree = () => evaluate(p, `return Array.from(d.querySelectorAll('li')).map(e=>{
+      const text=Array.from(e.childNodes).filter(n=>!['UL','OL'].includes(n.nodeName)).map(n=>n.textContent).join('').trim();
+      let parent=e,depth=0;while(parent=parent.parentElement)if(['UL','OL'].includes(parent.tagName))depth++;
+      const box=e.querySelector(':scope > input, :scope > p > input');return { text, depth, task:!!box, checked:!!box?.checked };
+    });`);
+    for (const { label, previous } of deletions) {
+      await choose(label);
+      const expected = (await taskTree()).filter(item => item.text !== label);
+      await evaluate(p, `
+        const s=d.getSelection(),text=s.anchorNode,r=d.createRange();
+        r.setStart(text,text.textContent.length-text.textContent.trimStart().length);r.setEnd(text,s.anchorOffset);
+        s.removeAllRanges();s.addRange(r);return true;
+      `);
+      await key('Backspace');
+      assert(await evaluate(p, `const item=d.querySelector(${JSON.stringify(target(label))});return !item.textContent.trim() && !!item.querySelector('input');`), '删空文字时不应一并删除 Todo');
+      await taskLayout();
+      const emptyIndex = await evaluate(p, `return Array.from(d.querySelectorAll('li')).indexOf(d.querySelector(${JSON.stringify(target(label))}));`);
+      const clickReopenedTask = async () => {
+        await reopen();
+        await evaluate(p, `d.querySelectorAll('li')[${emptyIndex}].dataset.listTarget=${JSON.stringify(label)};return true;`);
+        const inset = await evaluate(p, `const item=d.querySelector(${JSON.stringify(target(label))});return item.querySelector('input').getBoundingClientRect().right-item.getBoundingClientRect().left+3;`);
+        await click(p, target(label), false, inset);
+        assert(await evaluate(p, `
+          const s=d.getSelection(),n=s.anchorNode?.nodeType===1?s.anchorNode:s.anchorNode?.parentElement;
+          const item=d.querySelector(${JSON.stringify(target(label))}),text=item.querySelector('.folio-task-label');
+          return s.isCollapsed && d.activeElement.isContentEditable && n?.closest('li')===item && text.contains(s.anchorNode);
+        `), label + ' 重新打开后鼠标无法进入空任务');
+      };
+      await clickReopenedTask();
+      const emptySource = source();
+      await page.keyboard.insertText('重新输入'); await synced(p);
+      assert(await evaluate(p, `return d.querySelector(${JSON.stringify(target(label))}).textContent.trim()==='重新输入';`), '重新打开后文字未输入到空任务');
+      for (let i = 0; i < 4; i++) await page.keyboard.press('Backspace');
+      await synced(p); assert.equal(source(), emptySource, '重新输入并删空后任务结构改变');
+      await clickReopenedTask();
+      const beforeDelete = source();
+      await key('Backspace');
+      const afterDelete = source();
+      assert.notEqual(afterDelete, beforeDelete, '空 Todo 退格没有写回');
+      assert.deepEqual(await taskTree(), expected, '空任务删除影响了相邻项、层级或完成状态');
+      const caretLabel = () => evaluate(p, `
+        const s=d.getSelection(),n=s.anchorNode.nodeType===1?s.anchorNode:s.anchorNode.parentElement,item=n.closest('li');
+        return item ? Array.from(item.childNodes).filter(n=>!['UL','OL'].includes(n.nodeName)).map(n=>n.textContent).join('').trim() : null;
+      `);
+      assert.equal(await caretLabel(), previous, '删除空任务后的光标位置错误');
+      await changed('Meta+z', value => value === beforeDelete);
+      assert.equal((await taskTree()).length, expected.length + 1, '撤销未恢复空任务');
+      assert(await evaluate(p, `
+        const s=d.getSelection(),n=s.anchorNode.nodeType===1?s.anchorNode:s.anchorNode.parentElement,item=n.closest('li');
+        return item && !item.textContent.trim() && !!item.querySelector('input');
+      `), '撤销后光标未恢复到空任务');
+      await taskLayout();
+      await changed('Meta+Shift+z', value => value === afterDelete);
+      assert.equal(await caretLabel(), previous, '重做删除后的光标位置错误');
+      const continuation = previous ? '继续输入' : label + '后的正文';
+      await page.keyboard.insertText(continuation); await synced(p);
+      assert(source().includes(previous ? previous + continuation : '\n\n' + continuation), '删除后无法在正确位置继续输入');
+      await changed('Meta+z', value => value === afterDelete);
+      assert.equal(await caretLabel(), previous, '撤销续写后的光标位置错误');
+      await page.keyboard.insertText(continuation); await synced(p); await leave();
+      if (previous) assert(await locate(previous + continuation));
+      assert(source().includes('结束内容保持原位。'), '删除空任务误改了后续正文');
+    }
     await action('folio.edit').click(); await action('folio.preview').click();
     const restored = await findPreview(round);
+    await taskLayout(restored);
     assert(await evaluate(restored, "return d.querySelector('.markdown-body').textContent.includes('回车新项') && d.querySelectorAll('li ul, li ol').length >= 3;"));
     await page.screenshot({ path: path.join(evidence, `lists-round-${round}.png`) });
     result.rounds.push({
       round, status: 'passed', indentOutdent: true, mixedLists: true, preservesSubtrees: true, orderedStart: true, tasks: true, rangeSelection: true, boundaryNoop: true,
       checkboxFocusNavigation: true, undoRedoCaret: true, enterContinuesLevel: true, looseListsStayRich: true, clickWithoutMutation: true, looseTasksUndoRedo: true,
-      looseIndentOutdent: true, paragraphOrder: true, looseEnter: true, doubleEnterExitsList: true, exitPreservesHierarchy: true, exitUndoRedoCaret: true, reopen: true
+      looseIndentOutdent: true, paragraphOrder: true, looseEnter: true, doubleEnterExitsList: true, exitPreservesHierarchy: true, exitUndoRedoCaret: true,
+      emptyTaskBackspace: true, deletePreservesNeighbors: true, deleteUndoRedoCaret: true, emptyTaskRowHeight: true, tasksNeverOverlap: true,
+      emptyTaskReopenClick: true, emptyTaskReopenTyping: true, emptyTaskReopenBackspace: true, reopen: true
     });
     fs.writeFileSync(path.join(runtime, `lists-${round}-done`), '');
   }
