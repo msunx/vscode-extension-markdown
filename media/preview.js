@@ -137,11 +137,11 @@
       button.dataset.folioReady = 'true';
       button.setAttribute('aria-live', 'polite');
     });
-    document.querySelectorAll('input.task-list-item-checkbox').forEach(checkbox => {
+    document.querySelectorAll('input.task-list-item-checkbox').forEach((checkbox, index) => {
       const item = checkbox.closest('li.task-list-item');
       if (!item) return;
       if (editor?.owns(checkbox)) { checkbox.disabled = !editor.allowTask(checkbox); item.classList.toggle('folio-task-complete', checkbox.checked); return; }
-      if (!checkbox.id) checkbox.id = `folio-task-${checkbox.dataset.folioTaskLine || 'readonly'}-${Array.from(document.querySelectorAll('.task-list-item-checkbox')).indexOf(checkbox)}`;
+      if (!checkbox.id) checkbox.id = `folio-task-${checkbox.dataset.folioTaskLine || 'readonly'}-${index}`;
       if (!checkbox.nextElementSibling?.classList.contains('folio-task-label')) {
         const label = document.createElement('label');
         label.className = 'folio-task-label';
@@ -167,6 +167,8 @@
       checkbox.setAttribute('aria-label', `${checkbox.checked ? '取消完成' : '完成'}：${label}`);
       checkbox.title = host ? '勾选后同步到 Markdown，可撤销' : '使用右上角 Folio 图标打开可交互预览';
     });
+    // The labels just created are already initialized; do not scan the entire document again for our own mutations.
+    observer.takeRecords();
   }
   let scheduled = false;
   const observer = new MutationObserver(mutations => {

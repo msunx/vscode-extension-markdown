@@ -46,6 +46,13 @@ class PreviewProvider {
     for (const [panel, document] of this.documents) if (panel.active) return document;
   }
 
+  reveal(document, column) {
+    for (const [panel, current] of this.documents) {
+      if (current.uri.toString() === document.uri.toString() && panel.viewColumn === column) { panel.reveal(column); return true; }
+    }
+    return false;
+  }
+
   async flushActive() {
     for (const [panel, flush] of this.flushers) if (panel.active) return flush();
     return true;
@@ -69,6 +76,8 @@ class PreviewProvider {
     let ready = false;
     let timer;
     let revision = 0;
+    let rendering;
+    let bufferedContent;
     let historyVersion = 0;
     let historyReason;
     let queue = Promise.resolve();
@@ -80,8 +89,10 @@ class PreviewProvider {
       if (ready) void panel.webview.postMessage({ type: 'flush', id });
     }));
     const render = async error => {
+      if (disposed) return;
       clearTimeout(timer);
       const request = ++revision;
+      rendering = request;
       const version = document.version;
       try {
         const rendered = await vscode.commands.executeCommand('markdown.api.render', document);
@@ -90,17 +101,28 @@ class PreviewProvider {
           catch { return match; }
         });
         if (disposed || request !== revision || version !== document.version) return;
-        await panel.webview.postMessage({ type: 'content', html, version, historyVersion, historyReason, source: document.getText(),
-          writable: vscode.workspace.fs.isWritableFileSystem(document.uri.scheme) !== false, error: error || '' });
+        const message = { type: 'content', html, version, historyVersion, historyReason, source: document.getText(),
+          writable: vscode.workspace.fs.isWritableFileSystem(document.uri.scheme) !== false, error: error || '' };
+        if (ready) await panel.webview.postMessage(message);
+        else bufferedContent = message;
       } catch {
-        if (!disposed) await panel.webview.postMessage({ type: 'error', error: '预览加载失败，请返回编辑后重新打开。' });
+        if (!disposed && request === revision) {
+          const message = { type: 'error', error: '预览加载失败，请返回编辑后重新打开。' };
+          if (ready) await panel.webview.postMessage(message);
+          else bufferedContent = message;
+        }
+      } finally {
+        if (rendering === request) rendering = undefined;
       }
     };
     const listeners = [
       panel.webview.onDidReceiveMessage(message => {
         if (!message || typeof message !== 'object') return;
         if (message.type === 'ready') {
-          ready = true; void render();
+          ready = true;
+          if (bufferedContent && (bufferedContent.type === 'error' || bufferedContent.version === document.version)) void panel.webview.postMessage(bufferedContent);
+          else if (!rendering) void render();
+          bufferedContent = undefined;
           for (const id of flushRequests.keys()) void panel.webview.postMessage({ type: 'flush', id });
         }
         if (message.type === 'edit') {
@@ -151,6 +173,7 @@ class PreviewProvider {
     ];
     panel.onDidDispose(() => {
       disposed = true;
+      bufferedContent = undefined;
       clearTimeout(timer);
       listeners.forEach(listener => listener.dispose());
       this.documents.delete(panel);
@@ -159,6 +182,8 @@ class PreviewProvider {
       flushRequests.clear();
     });
     panel.webview.html = this.page(document, panel.webview, extensions);
+    // Render while Cursor initializes its webview instead of waiting for the frontend's ready handshake.
+    void render();
   }
 
   page(document, webview, extensions) {

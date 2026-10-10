@@ -30,7 +30,7 @@ async function openPreview(resource) {
     vscode.window.showInformationMessage('Folio 仅用于 Markdown 文档。');
     return false;
   }
-  await vscode.commands.executeCommand('vscode.openWith', uri, viewType, group.viewColumn);
+  if (!previews.reveal(document, group.viewColumn)) await vscode.commands.executeCommand('vscode.openWith', uri, viewType, group.viewColumn);
   if (nativePreview && tab?.input instanceof vscode.TabInputWebview) await vscode.window.tabGroups.close(tab, true);
   return true;
 }

@@ -28,11 +28,13 @@ npm run check
 npm run package
 ```
 
-1. 在 Cursor 命令面板执行 **Extensions: Install from VSIX**，选择 `folio-markdown-0.4.10.vsix`。
+1. 在 Cursor 命令面板执行 **Extensions: Install from VSIX**，选择 `folio-markdown-0.4.11.vsix`。
 2. 执行 **Developer: Reload Window**，打开任意 Markdown 文件。
 3. 点击右上角的**书本按钮**「Folio 编辑预览」。点击**铅笔按钮**返回源码，也可用 `⌘⌥V` 切换。
 
 首次启用时，Folio 会固定这两个标题栏按钮。如果曾手动隐藏，可在命令面板搜索 `Folio`。
+
+通过铅笔按钮或 `⌘⌥V` 返回源码后，再次进入同一分栏的预览会复用已有页面，并同步源码修改。关闭预览标签后重新打开，需要等待 Cursor 创建新的预览容器；包含大量 Todo 的文档已减少重复扫描，缩短内容初始化时间。
 
 ## 在预览里写作
 
