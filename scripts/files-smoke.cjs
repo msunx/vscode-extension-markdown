@@ -50,7 +50,7 @@ exports.run = async () => {
       result.checks.push('嵌套 Todo 插入链接保留任务与层级、撤销重做');
       stage('inline'); await done('inline');
       assert(document.getText().includes('行内位置 **保留格式** [网站](https://example.com/guide) 继续写尾文、正常标点/正常斜杠'));
-      result.checks.push('行内菜单只包含链接组件、普通标点不触发、行内链接保留前后文字与格式、继续输入不延长链接');
+      result.checks.push('行内菜单只包含行内组件、普通标点不触发、行内链接保留前后文字与格式、继续输入不延长链接');
       stage('stale'); await done('picker-open');
       const edit = new vscode.WorkspaceEdit(); edit.insert(uri, document.positionAt(document.getText().length), '\r\n外部新增\r\n');
       assert(await vscode.workspace.applyEdit(edit)); await done('stale');

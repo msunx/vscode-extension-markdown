@@ -322,23 +322,37 @@ body[data-folio-interactive] .folio-block-content { cursor: text; }
 }
 .folio-source-input.is-settling { border-color: var(--folio-soft-line); }
 .folio-insert-menu {
-  position: fixed; z-index: 100; width: 288px; overflow-y: auto; overscroll-behavior: contain; padding: 7px; border: 1px solid var(--folio-line); border-radius: 9px;
+  position: fixed; z-index: 100; display: flex; flex-direction: column; box-sizing: border-box; width: 288px; overflow: hidden; padding: 0;
+  border: 1px solid var(--folio-line); border-radius: 10px;
   color: var(--folio-fg); background: #292d43; box-shadow: 0 12px 32px #11132166, 0 2px 6px #11132155; font: 14px/1.5 var(--folio-reading-font);
 }
 .folio-insert-menu[hidden], .folio-editor-feedback[hidden], .folio-recovery[hidden], .folio-block-content[hidden] { display: none; }
 .folio-insert-menu.is-opening { animation: folio-menu-in 140ms cubic-bezier(.2, .7, .2, 1); }
-.folio-menu-query { padding: 7px 9px 10px; color: var(--folio-muted); border-bottom: 1px solid var(--folio-soft-line); margin-bottom: 4px; }
-.folio-menu-group { padding: 9px 9px 5px; color: var(--folio-muted); font-size: 12px; }
+.folio-menu-query { flex-shrink: 0; padding: 12px 15px; color: var(--folio-muted); border-bottom: 1px solid var(--folio-soft-line); font-size: 12px; line-height: 1.5; }
+.folio-menu-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 5px 6px 7px; scrollbar-width: thin; }
+.folio-menu-group { display: flex; align-items: center; gap: 10px; padding: 10px 9px 6px; color: var(--folio-muted); font-size: 11px; line-height: 16px; }
+.folio-menu-group::after { content: ''; height: 1px; flex: 1; background: var(--folio-soft-line); }
 .folio-menu-item {
-  display: flex; align-items: center; gap: 11px; width: 100%; min-height: 35px; padding: 5px 10px; margin: 1px 0; border: 1px solid transparent; border-radius: 5px;
+  display: flex; align-items: center; gap: 11px; box-sizing: border-box; width: 100%; min-height: 40px; padding: 5px 9px; margin: 2px 0; border: 1px solid transparent; border-radius: 7px;
   background: transparent; color: var(--folio-fg); text-align: left; font: inherit; cursor: pointer; transition: background-color 100ms, border-color 100ms, transform 90ms;
 }
-.folio-menu-item[aria-selected="true"] { background: var(--folio-surface); border-color: var(--folio-soft-line); }
-.folio-menu-item:hover { background: var(--folio-surface); }
-.folio-menu-item:active { transform: translateX(2px); }
+.folio-menu-item:hover { background: color-mix(in srgb, var(--folio-fg) 5%, transparent); }
+.folio-menu-item[aria-selected="true"] { background: var(--folio-surface); border-color: color-mix(in srgb, var(--folio-module-color) 30%, transparent); }
+.folio-menu-item:active { transform: translateX(1px); }
 .folio-menu-item:focus-visible { outline: 2px solid var(--folio-accent); outline-offset: -2px; }
-.folio-module-icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 25px; font: 500 17px/1.3 var(--folio-mono); }
-.folio-menu-hint { position: sticky; bottom: -7px; margin: 7px -7px -7px; padding: 9px 16px; border-top: 1px solid var(--folio-soft-line); color: var(--folio-muted); background: #292d43; font-size: 12px; }
+.folio-module-icon {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 28px; width: 28px; height: 28px; border-radius: 6px; color: var(--folio-module-color);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+.folio-module-icon svg { display: block; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.folio-menu-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.45; }
+.folio-menu-hint {
+  display: flex; flex-wrap: wrap; flex-shrink: 0; gap: 6px 14px; padding: 10px 15px; border-top: 1px solid var(--folio-soft-line); color: var(--folio-muted); font-size: 11px;
+}
+.folio-menu-hint > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.folio-menu-hint kbd {
+  padding: 1px 4px; border: 1px solid var(--folio-soft-line); border-radius: 3px; background: var(--folio-code-bg); color: var(--folio-fg); box-shadow: none; font: 10px/1.4 var(--folio-mono);
+}
 .folio-menu-empty { margin: 18px 9px; color: var(--folio-muted); }
 .folio-editor-feedback { position: fixed; right: 18px; bottom: 12px; padding: 3px 9px; border-radius: 4px; background: var(--folio-bg); color: var(--folio-muted); font-size: 12px; pointer-events: none; }
 .folio-recovery { position: sticky; bottom: 12px; z-index: 90; display: flex; flex-wrap: wrap; gap: 8px; max-width: 760px; margin: 14px auto 0; padding: 12px; background: var(--folio-code-bg); border: 1px solid var(--folio-red); border-radius: var(--folio-radius); }
@@ -353,11 +367,46 @@ body[data-folio-interactive] .folio-block-content { cursor: text; }
 .folio-resource-form button[type="submit"] { background: var(--folio-accent); color: var(--folio-on-accent); border-color: var(--folio-accent); }
 .folio-resource-form button:hover, .folio-recovery button:hover { border-color: var(--folio-accent); }
 .folio-recovery button:focus-visible { outline: 2px solid var(--folio-accent); outline-offset: 2px; }
+.folio-emoji-picker {
+  position: fixed; z-index: 110; display: flex; flex-direction: column; gap: 12px; box-sizing: border-box; padding: 14px; overflow: auto; overscroll-behavior: contain;
+  border: 1px solid var(--folio-line); border-radius: 10px; background: #292d43; color: var(--folio-fg); box-shadow: 0 12px 32px #11132166, 0 2px 6px #11132155;
+  font: 14px/1.5 var(--folio-reading-font); animation: folio-menu-in 140ms cubic-bezier(.2, .7, .2, 1);
+}
+.folio-emoji-picker[hidden], .folio-emoji-grid[hidden], .folio-emoji-empty[hidden] { display: none; }
+.folio-emoji-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.folio-emoji-header strong { font-weight: 600; color: var(--folio-yellow); }
+.folio-emoji-picker button { border: 1px solid transparent; border-radius: 6px; color: var(--folio-fg); background: transparent; cursor: pointer; font: inherit; }
+.folio-emoji-header button { width: 28px; height: 28px; color: var(--folio-muted); font: 22px/1 sans-serif; }
+.folio-emoji-picker input {
+  width: 100%; box-sizing: border-box; flex-shrink: 0; min-height: 38px; padding: 8px 10px; border: 1px solid var(--folio-soft-line); border-radius: 6px;
+  background: var(--folio-bg); color: var(--folio-fg); font: inherit; outline: none; transition: border-color 120ms, box-shadow 120ms;
+}
+.folio-emoji-picker input::placeholder { color: var(--folio-muted); opacity: 1; font-size: 13px; }
+.folio-emoji-picker input:focus { border-color: var(--folio-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--folio-accent) 15%, transparent); }
+.folio-emoji-categories { display: flex; gap: 4px; flex-shrink: 0; overflow-x: auto; padding-bottom: 3px; }
+.folio-emoji-categories button { flex-shrink: 0; min-height: 30px; padding: 3px 6px; color: var(--folio-muted); font-size: 12px; transition: background-color 120ms, color 120ms; }
+.folio-emoji-categories button[aria-pressed="true"] { background: var(--folio-surface); color: var(--folio-yellow); border-color: var(--folio-soft-line); }
+.folio-emoji-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); gap: 4px; min-height: 42px; max-height: 230px; overflow-y: auto; padding: 2px; }
+.folio-emoji-grid button {
+  min-width: 0; height: 36px; padding: 0; font: 24px/1 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+  transition: background-color 100ms, transform 100ms;
+}
+.folio-emoji-grid button:hover, .folio-emoji-grid button.is-selected, .folio-emoji-header button:hover { background: var(--folio-surface); }
+.folio-emoji-grid button:active { transform: scale(.9); }
+.folio-emoji-picker button:focus-visible { outline: 2px solid var(--folio-accent); outline-offset: -2px; }
+.folio-emoji-empty { padding: 24px 8px; margin: 0; color: var(--folio-muted); text-align: center; font-size: 13px; }
+.folio-emoji-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding-top: 10px; border-top: 1px solid var(--folio-soft-line); font-size: 12px; }
+.folio-emoji-footer span:last-child { color: var(--folio-muted); }
 @keyframes folio-menu-in { from { opacity: 0; transform: translateY(-3px) scale(.985); } to { opacity: 1; transform: none; } }
 @keyframes folio-edit-focus { from { opacity: .8; } to { opacity: 1; } }
 @media (max-width: 600px) { body[data-folio-interactive] { padding-left: 34px; padding-right: 24px; } }
 @media (prefers-reduced-motion: reduce) {
   .folio-block, .folio-insert-menu, .folio-menu-item, .folio-resource-form { animation: none !important; transition: none !important; }
+  .folio-emoji-picker, .folio-emoji-picker * { animation: none !important; transition: none !important; }
+}
+@media (forced-colors: active) {
+  .folio-emoji-picker, .folio-emoji-picker input { background: Canvas; color: CanvasText; border-color: ButtonText; }
+  .folio-emoji-grid button.is-selected, .folio-emoji-categories button[aria-pressed="true"] { border-color: Highlight; }
 }
 @media (forced-colors: active) { .folio-insert-menu, .folio-menu-hint { background: Canvas; color: CanvasText; } .folio-menu-item[aria-selected="true"] { border-color: Highlight; } }
 

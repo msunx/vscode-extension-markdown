@@ -69,19 +69,26 @@
     return Array.from(node.childNodes, serialize).join('');
   }
 
+  const headingNumbers = [
+    'M17 13l2-1v8m-2 0h4', 'M16 14a2.5 2.5 0 0 1 5 0c0 2-5 4-5 6h5', 'M16 12h5l-3 3c4 0 4 5 0 5h-2',
+    'M20 20v-8l-5 5h7', 'M21 12h-5v4h2.5a2 2 0 0 1 0 4H16', 'M20 12c-4 0-5 8-1 8a2.5 2.5 0 0 0 0-5h-2'
+  ];
   const modules = [
-    ['text', '文本', 'T', 'text paragraph wenben', '基础', 'blue'],
-    ...['一级标题', '二级标题', '三级标题', '四级标题', '五级标题', '六级标题'].map((label, i) => [`h${i + 1}`, label, `H${i + 1}`, `heading title biaoti ${i + 1}`, '基础', ['accent', 'blue', 'teal', 'peach', 'yellow', 'pink'][i]]),
-    ['ordered', '有序列表', '1.', 'ordered list youxu', '基础', 'peach'],
-    ['bullet', '无序列表', '≡', 'unordered bullet list wuxu', '基础', 'teal'],
-    ['code', '代码块', '{ }', 'code daima', '基础', 'green'],
-    ['quote', '引用', '“', 'blockquote quote yinyong', '基础', 'teal'],
-    ['divider', '分隔线', '—', 'divider horizontal fengexian', '基础', 'peach'],
-    ['link', '链接', '↗', 'link lianjie', '常用', 'blue'],
-    ['file', '项目文件', '▱', 'file project workspace wenjian xiangmu 文件链接', '常用', 'teal'],
-    ['task', '任务', '☑', 'todo task checklist renwu', '常用', 'green'],
-    ['image', '图片', '▧', 'image photo tupian', '常用', 'yellow'],
-    ['table', '表格', '▦', 'table biaoge', '常用', 'blue']
+    ['text', '文本', 'M4 5h16M12 5v14M8 19h8', 'text paragraph wenben', '基础', 'blue'],
+    ...['一级标题', '二级标题', '三级标题', '四级标题', '五级标题', '六级标题'].map((label, i) => [
+      `h${i + 1}`, label, `M3 5v14M11 5v14M3 12h8${headingNumbers[i]}`, `heading title biaoti ${i + 1}`, '基础', ['accent', 'blue', 'teal', 'peach', 'yellow', 'pink'][i]
+    ]),
+    ['ordered', '有序列表', 'M3 5l2-1v6M3 10h4M3 15a2 2 0 0 1 4 0c0 1.5-4 3-4 5h4M11 7h10M11 17h10', 'ordered list youxu', '基础', 'peach'],
+    ['bullet', '无序列表', 'M6 6a1 1 0 1 0-2 0 1 1 0 0 0 2 0M6 12a1 1 0 1 0-2 0 1 1 0 0 0 2 0M6 18a1 1 0 1 0-2 0 1 1 0 0 0 2 0M10 6h11M10 12h11M10 18h11', 'unordered bullet list wuxu', '基础', 'teal'],
+    ['code', '代码块', 'M8 6l-6 6 6 6M16 6l6 6-6 6M14 4l-4 16', 'code daima', '基础', 'green'],
+    ['quote', '引用', 'M10 6H4v7h6V6ZM10 13c0 4-2 6-5 6M20 6h-6v7h6V6ZM20 13c0 4-2 6-5 6', 'blockquote quote yinyong', '基础', 'teal'],
+    ['divider', '分隔线', 'M3 12h7M14 12h7M12 10l2 2-2 2-2-2 2-2Z', 'divider horizontal fengexian', '基础', 'peach'],
+    ['link', '链接', 'M10 13a4 4 0 0 0 6 0l4-4a4 4 0 0 0-6-6l-2 2M14 11a4 4 0 0 0-6 0l-4 4a4 4 0 0 0 6 6l2-2', 'link lianjie', '常用', 'blue'],
+    ['file', '项目文件', 'M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6ZM14 3v6h6M8 13h8M8 17h5', 'file project workspace wenjian xiangmu 文件链接', '常用', 'teal'],
+    ['emoji', 'Emoji 表情', 'M21 12a9 9 0 1 0-18 0 9 9 0 0 0 18 0ZM8 9h.01M16 9h.01M8 14c1.5 4 6.5 4 8 0', 'emoji emote biaoqing 表情 笑脸', '常用', 'yellow'],
+    ['task', '任务', 'M19 11v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h10M8 11l4 4 9-11', 'todo task checklist renwu', '常用', 'green'],
+    ['image', '图片', 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM3 17l6-6 5 5 3-3 4 4M17 7a1 1 0 1 0-2 0 1 1 0 0 0 2 0', 'image photo tupian', '常用', 'yellow'],
+    ['table', '表格', 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM3 9h18M3 15h18M10 9v12', 'table biaoge', '常用', 'blue']
   ];
 
   window.FolioEditor = function ({ host, showError, applyContent, enhance }) {
@@ -92,6 +99,8 @@
     let source = '', writable = true, active = null, deferred = null, sequence = 0, composing = false, conflicted = false, menuState = null;
     let historyVersion = 0, historyCaret = null;
     let fileRequest = null;
+    let emojiRequest = null;
+    const emojiPicker = window.FolioEmojiPicker({ onSelect: insertEmoji, onClose: closeEmoji });
     const menu = document.createElement('div');
     menu.className = 'folio-insert-menu'; menu.hidden = true; menu.setAttribute('role', 'listbox'); menu.id = 'folio-insert-menu'; menu.setAttribute('aria-label', '插入模块');
     const footer = document.createElement('div');
@@ -116,6 +125,7 @@
       const result = [0]; for (let i = 0; i < text.length; i++) if (text[i] === '\n') result.push(i + 1); result.push(text.length); return result;
     }
     function attach(message) {
+      closeEmoji(false);
       source = message.source || ''; writable = message.writable !== false;
       const lines = offsets(source);
       for (const block of main.querySelectorAll('.folio-block')) {
@@ -169,7 +179,7 @@
         // Empty paragraphs have no Markdown token; recreate the writing position when undo/redo returns here.
         const list = active.content.querySelector(':scope > ul, :scope > ol');
         if (list) {
-          const paragraph = document.createElement('p'); paragraph.append(document.createElement('br')); list.after(paragraph);
+          const paragraph = paragraphAfterListItem(list, saved.listItems);
           active.lastHTML = active.content.innerHTML; caretEnd(paragraph); return;
         }
         caretEnd(active.content); return;
@@ -267,6 +277,7 @@
     }
     function finish(refresh = true) {
       if (!active || composing) return;
+      closeEmoji(false);
       cancelFileRequest();
       sync(); closeMenu(); active.block.classList.remove('is-editing'); active.content.contentEditable = 'false'; active.content.removeAttribute('role');
       if (active.raw) { active.input.readOnly = true; active.input.classList.add('is-settling'); }
@@ -306,6 +317,7 @@
             || message.historyReason === 'undo' && source !== edit.before)) { historyCaret = edit.afterCaret; break; }
         }
         historyVersion = message.historyVersion;
+        closeEmoji(false);
         cancelFileRequest();
         closeMenu(); active = null; deferred = null; composing = false; conflicted = false; pending.clear();
         recovery.hidden = true; host.setState({ ...state(), draft: null }); showError(''); feedback(''); settle();
@@ -339,6 +351,17 @@
       const range = selection.getRangeAt(0).cloneRange(); range.selectNodeContents(line); range.setEnd(selection.anchorNode, selection.anchorOffset);
       return { line, before: range.toString(), range: selection.getRangeAt(0).cloneRange() };
     }
+    function paragraphAfterListItem(list, count) {
+      const items = Array.from(list.children).filter(child => child.tagName === 'LI');
+      if (count < items.length) {
+        const tail = list.cloneNode(false);
+        if (list.tagName === 'OL') tail.setAttribute('start', String((Number(list.getAttribute('start')) || 1) + count));
+        tail.append(...items.slice(count)); list.after(tail);
+      }
+      const paragraph = document.createElement('p'); paragraph.append(document.createElement('br')); list.after(paragraph);
+      if (!list.querySelector(':scope > li')) list.remove();
+      return paragraph;
+    }
     function enterList() {
       if (active.raw || conflicted || !writable) return false;
       const selection = window.getSelection();
@@ -349,25 +372,33 @@
       const empty = !item.textContent.trim() && !item.querySelector('ul, ol, img, pre, table, hr');
       if (empty) {
         // Chromium's native empty-item Enter can lift the previous child list out of its parent.
-        // Remove only the empty item and place a plain paragraph after the complete list.
-        let root = item.parentElement;
-        while (root.parentElement.tagName === 'LI') root = root.parentElement.parentElement;
+        // Keep the preceding subtree intact and split off following root items at the current position.
+        let boundary = item, root = item.parentElement;
+        while (root.parentElement.tagName === 'LI') { boundary = root.parentElement; root = boundary.parentElement; }
         const before = source, beforeCaret = captureCaret();
         const preceding = Array.from(active.content.childNodes).slice(0, Array.from(active.content.childNodes).indexOf(root)).map(serialize).join('');
-        const afterCaret = { start: active.start + (active.prefix + preceding).replace(/\r?\n/g, eol()).length, raw: false, afterList: true };
-        const paragraph = document.createElement('p'); paragraph.append(document.createElement('br')); root.after(paragraph);
+        const rootItems = Array.from(root.children).filter(child => child.tagName === 'LI');
+        const precedingItems = rootItems.slice(0, rootItems.indexOf(boundary) + (boundary === item ? 0 : 1));
         let container = item.parentElement;
         item.remove();
-        while (container !== active.content && !container.textContent.trim() && !container.querySelector('li, input, img')) {
+        while (container !== root && !container.textContent.trim() && !container.querySelector('li, input, img')) {
           const parent = container.parentElement; container.remove(); container = parent;
         }
+        const count = precedingItems.filter(child => child.parentElement === root).length;
+        const afterCaret = { start: active.start + (active.prefix + preceding).replace(/\r?\n/g, eol()).length, raw: false, afterList: true, listItems: count };
+        const paragraph = paragraphAfterListItem(root, count);
         active.content.focus(); caretEnd(paragraph); sync();
+        if (!count) {
+          afterCaret.afterList = false; afterCaret.emptyBlock = true;
+          afterCaret.end = afterCaret.start + (source.slice(afterCaret.start, active.end).match(/^[\r\n]*/)?.[0].length || 0);
+        }
         rememberListEdit(before, beforeCaret, afterCaret);
         return true;
       }
       const after = selection.getRangeAt(0).cloneRange(); after.selectNodeContents(item); after.setStart(selection.anchorNode, selection.anchorOffset);
       const remaining = after.cloneContents(); remaining.querySelectorAll('ul, ol').forEach(list => list.remove());
       if (remaining.textContent.trim() || remaining.querySelector('img, pre, table, hr')) return false;
+      const before = source, beforeCaret = captureCaret();
       const next = document.createElement('li');
       const paragraph = item.querySelector(':scope > p') ? document.createElement('p') : next;
       if (paragraph !== next) next.append(paragraph);
@@ -379,7 +410,8 @@
         text = document.createElement('label'); text.className = 'folio-task-label'; paragraph.append(checkbox, text);
       }
       text.append(document.createElement('br')); item.after(next);
-      active.content.focus(); caretEnd(text); sync(); return true;
+      active.content.focus(); caretEnd(text); sync();
+      rememberListEdit(before, beforeCaret, captureCaret()); return true;
     }
     function rememberListEdit(before, beforeCaret, afterCaret) {
       listEdits.push({ before, after: source, beforeCaret, afterCaret });
@@ -469,24 +501,32 @@
       if (!location || (!match && !force)) { closeMenu(); return; }
       const query = match ? match[1].toLowerCase() : '';
       const inlineMode = force && !match && Boolean(location.line.textContent.trim());
-      const items = modules.filter(item => (!inlineMode || ['link', 'file'].includes(item[0])) && `${item[0]} ${item[1]} ${item[3]}`.toLowerCase().includes(query));
+      const items = modules.filter(item => (!inlineMode || ['link', 'file', 'emoji'].includes(item[0])) && `${item[0]} ${item[1]} ${item[3]}`.toLowerCase().includes(query));
       const selected = menuState?.query === query ? Math.min(menuState.selected, items.length - 1) : 0;
       const opening = menu.hidden;
       menuState = { ...location, query, trigger: Boolean(match), inlineMode, items, selected: Math.max(0, selected) };
       menu.replaceChildren();
       const search = document.createElement('div'); search.className = 'folio-menu-query';
       search.textContent = inlineMode ? '在光标处插入，保留前后文字' : query ? `搜索：${match[1]}` : '输入关键词筛选'; menu.append(search);
+      const list = document.createElement('div'); list.className = 'folio-menu-list'; list.setAttribute('role', 'presentation'); menu.append(list);
       let group;
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
-        if (item[4] !== group) { group = item[4]; const label = document.createElement('div'); label.className = 'folio-menu-group'; label.textContent = inlineMode ? '行内插入' : group; menu.append(label); }
+        if (item[4] !== group) { group = item[4]; const label = document.createElement('div'); label.className = 'folio-menu-group'; label.textContent = inlineMode ? '行内插入' : group; list.append(label); }
         const button = document.createElement('button'); button.type = 'button'; button.className = 'folio-menu-item'; button.id = `folio-option-${item[0]}`; button.dataset.module = item[0];
         button.setAttribute('role', 'option'); button.setAttribute('aria-selected', String(i === menuState.selected));
-        const icon = document.createElement('span'); icon.className = 'folio-module-icon'; icon.style.color = `var(--folio-${item[5]})`; icon.textContent = item[2];
-        const label = document.createElement('span'); label.textContent = item[1]; button.append(icon, label); menu.append(button);
+        button.style.setProperty('--folio-module-color', `var(--folio-${item[5]})`);
+        const icon = document.createElement('span'); icon.className = 'folio-module-icon'; icon.setAttribute('aria-hidden', 'true');
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('focusable', 'false');
+        const path = document.createElementNS(svg.namespaceURI, 'path'); path.setAttribute('d', item[2]); svg.append(path); icon.append(svg);
+        const label = document.createElement('span'); label.className = 'folio-menu-label'; label.textContent = item[1]; button.append(icon, label); list.append(button);
       }
-      if (!items.length) { const empty = document.createElement('p'); empty.className = 'folio-menu-empty'; empty.textContent = '没有匹配的模块'; menu.append(empty); }
-      const hint = document.createElement('div'); hint.className = 'folio-menu-hint'; hint.textContent = '↑↓ 选择　↵ 插入　Esc 关闭'; menu.append(hint);
+      if (!items.length) { const empty = document.createElement('p'); empty.className = 'folio-menu-empty'; empty.textContent = '没有匹配的模块'; list.append(empty); }
+      const hint = document.createElement('div'); hint.className = 'folio-menu-hint';
+      for (const [key, text] of [['↑↓', '选择'], ['↵', '插入'], ['Esc', '关闭']]) {
+        const part = document.createElement('span'), kbd = document.createElement('kbd'); kbd.textContent = key; part.append(kbd, document.createTextNode(text)); hint.append(part);
+      }
+      menu.append(hint);
       menu.hidden = false; menu.classList.toggle('is-opening', opening); positionMenu();
       active.input.setAttribute('aria-controls', menu.id); active.input.setAttribute('aria-expanded', 'true'); highlight();
     }
@@ -498,7 +538,7 @@
       const up = below < 240 && above > below;
       menu.style.width = `${width}px`; menu.style.maxHeight = `${Math.max(120, Math.min(440, up ? above : below))}px`;
       menu.style.left = `${Math.max(safe, Math.min(anchor.left, innerWidth - width - safe))}px`;
-      menu.style.top = `${Math.max(safe, up ? anchor.top - gap - menu.offsetHeight : anchor.bottom + gap)}px`;
+      menu.style.top = `${Math.max(safe, Math.min(innerHeight - menu.offsetHeight - safe, up ? anchor.top - gap - menu.offsetHeight : anchor.bottom + gap))}px`;
       menu.style.transformOrigin = up ? 'bottom left' : 'top left';
     }
     function highlight() {
@@ -519,6 +559,11 @@
     function selectModule(id) {
       if (!menuState) return;
       if (id === 'file') { requestProjectFile(); return; }
+      if (id === 'emoji') {
+        const insertion = captureInsertion(menuState, true);
+        if (!insertion) return;
+        closeMenu(); showError(''); emojiRequest = insertion; emojiPicker.open(insertion.caret); return;
+      }
       if (id === 'link') {
         const insertion = captureInsertion(menuState);
         if (!insertion) return;
@@ -556,12 +601,12 @@
       if (fileRequest) host.postMessage({ type: 'cancel-pick-file' });
       fileRequest = null;
     }
-    function captureInsertion(location) {
+    function captureInsertion(location, allowLink = false) {
       if (!active || !writable || conflicted) return;
       const range = location.range.cloneRange();
-      if (!active.content.contains(range.startContainer) || !active.content.contains(range.endContainer)) { closeMenu(); showError('请将光标放在一个编辑区块内，再选择项目文件。'); return; }
+      if (!active.content.contains(range.startContainer) || !active.content.contains(range.endContainer)) { closeMenu(); showError('请将光标放在一个编辑区块内，再插入内容。'); return; }
       const element = node => node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-      if (element(range.startContainer)?.closest('a') || element(range.endContainer)?.closest('a')) {
+      if (!allowLink && (element(range.startContainer)?.closest('a') || element(range.endContainer)?.closest('a'))) {
         closeMenu(); showError('请将光标移到已有链接之外，再插入新链接。'); return;
       }
       if (location.trigger) {
@@ -584,6 +629,23 @@
     }
     function validInsertion(request) {
       return !conflicted && writable && active === request.editor && request.target.isConnected && source === request.source && request.target.innerHTML === request.html;
+    }
+    function closeEmoji(restore = false) {
+      const request = emojiRequest; emojiRequest = null; emojiPicker.close();
+      if (!restore || !request || !validInsertion(request)) return;
+      active.input.focus({ preventScroll: true });
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(request.caret);
+    }
+    function insertEmoji(value) {
+      const request = emojiRequest;
+      if (!request) return;
+      closeEmoji(false);
+      if (!validInsertion(request)) { showError('插入位置已变化，请重新选择表情。'); return; }
+      active.input.focus({ preventScroll: true });
+      const text = document.createTextNode(value); request.range.deleteContents(); request.range.insertNode(text);
+      request.range.setStart(text, text.length); request.range.collapse(true);
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(request.range);
+      sync();
     }
     function insertLink(request, href, text) {
       if (!validInsertion(request)) { showError('插入位置已变化，请重新打开插入菜单。'); return false; }
@@ -640,6 +702,8 @@
     menu.addEventListener('mousedown', event => event.preventDefault());
     menu.addEventListener('click', event => { const button = event.target.closest('[data-module]'); if (button) selectModule(button.dataset.module); });
     document.addEventListener('pointerdown', event => {
+      if (emojiPicker.element.contains(event.target)) return;
+      if (emojiRequest) closeEmoji(false);
       if (!(event.target instanceof Element) || menu.contains(event.target) || recovery.contains(event.target) || event.target.closest('.folio-resource-form')) return;
       if (event.altKey) { finish(); return; }
       if (event.target.closest('input, a, button, summary, textarea')) return;
@@ -651,6 +715,7 @@
         }
       } else finish();
     });
+    document.addEventListener('focusin', event => { if (emojiRequest && !emojiPicker.element.contains(event.target)) closeEmoji(false); });
     main.addEventListener('click', event => {
       if (active?.content.contains(event.target) && event.target.closest('label.folio-task-label')) event.preventDefault();
     });
@@ -664,6 +729,7 @@
     document.addEventListener('keydown', event => {
       if (event.isComposing || composing) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's' && active) { event.preventDefault(); event.stopPropagation(); void flush().then(ok => { if (ok) host.postMessage({ type: 'save' }); }); return; }
+      if (emojiPicker.element.contains(event.target)) return;
       if (event.target.closest?.('.folio-resource-form')) return;
       if (event.key === 'Enter' && event.target.classList?.contains('folio-block-content') && active?.content !== event.target) { event.preventDefault(); open(event.target.closest('.folio-block'), true); return; }
       if (!active) return;

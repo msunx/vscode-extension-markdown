@@ -178,9 +178,18 @@ const until = async (predicate, label) => {
     await changed('Tab', s => s.includes('   1. 空行计划乙'));
     assert.equal(await depth('空行计划乙'), 2); await key('Shift+Tab'); await leave();
     assert(source().includes('7. 空行计划甲\n\n8. 空行计划乙\n\n9. 空行计划丙'), '留白编号或段间空行被改变');
+    const taskTree = () => evaluate(p, `return Array.from(d.querySelectorAll('li')).map(e=>{
+      const text=Array.from(e.childNodes).filter(n=>!['UL','OL'].includes(n.nodeName)).map(n=>n.textContent).join('').trim();
+      let parent=e,depth=0;while(parent=parent.parentElement)if(['UL','OL'].includes(parent.tagName))depth++;
+      const box=e.querySelector(':scope > input, :scope > p > input');return { text, depth, task:!!box, checked:!!box?.checked };
+    });`);
     const exits = [
+      { label: '中间任务当前项', depth: 1, task: true, checked: false, markdown: '- [ ] 中间任务当前项', following: '- [x] 中间任务后项', history: true },
+      { label: '普通当前项', depth: 1, task: false, markdown: '- 普通当前项', following: '- 普通后项' },
+      { label: '编号当前项', depth: 1, task: false, markdown: '7. 编号当前项', following: '8. 编号后项', history: true },
+      { label: '留白当前项', depth: 1, task: true, checked: true, markdown: '- [x] 留白当前项', following: '- [ ] 留白后项' },
       { label: '回车子项', depth: 2, task: true, checked: true, markdown: '  - [x] 回车子项' },
-      { label: '回车留白子项', depth: 2, task: true, checked: false, markdown: '  - [ ] 回车留白子项' },
+      { label: '回车留白子项', depth: 2, task: true, checked: false, markdown: '  - [ ] 回车留白子项', following: '- [ ] 回车留白后项' },
       { label: '回车留白后项', depth: 1, task: true, checked: false, markdown: '- [ ] 回车留白后项' },
       { label: '回车内层', depth: 3, task: false, markdown: '    - 回车内层' },
       { label: '回车步骤', depth: 2, task: false, markdown: '   1. 回车步骤' }
@@ -188,7 +197,7 @@ const until = async (predicate, label) => {
     for (const scenario of exits) {
       const { label } = scenario;
       await choose(label);
-      const beforeEnter = source();
+      const beforeEnter = source(), originalTree = await taskTree();
       await key('Enter');
       const first = await evaluate(p, `
         const s=d.getSelection(),n=s.anchorNode.nodeType===1?s.anchorNode:s.anchorNode.parentElement,item=n.closest('li');
@@ -197,7 +206,10 @@ const until = async (predicate, label) => {
       `);
       assert.deepEqual(first, { sameLevel: true, empty: true, checkbox: scenario.task, checked: false }, label + ' 首次回车应新建同级空项');
       await taskLayout();
+      const beforeExit = source();
       await key('Enter');
+      const afterExit = source();
+      assert.deepEqual(await taskTree(), originalTree, label + ' 退出列表改变了已有项目、层级或状态');
       assert.equal(await depth(label), scenario.depth, label + ' 层级被连带改变');
       assert(source().includes(scenario.markdown), label + ' 已有内容或状态丢失');
       assert(await evaluate(p, `
@@ -206,23 +218,30 @@ const until = async (predicate, label) => {
       `), label + ' 第二次回车没有进入列表外普通正文');
       await page.keyboard.insertText(label + '后的正文'); await synced(p);
       assert(source().includes('\n\n' + label + '后的正文'), label + ' 新正文仍带有列表格式');
-      if (label === '回车子项') {
+      const checkPosition = () => {
+        if (!scenario.following) return;
+        const text = source(), current = text.indexOf(scenario.markdown), paragraph = text.indexOf(label + '后的正文'), next = text.indexOf(scenario.following);
+        assert(current < paragraph && paragraph < next, label + ' 的新正文应位于当前项与后续列表之间');
+      };
+      checkPosition();
+      if (label === '回车子项' || scenario.history) {
         await changed('Meta+z', s => !s.includes(label + '后的正文'));
         await page.keyboard.insertText('撤销后继续正文'); await synced(p);
         assert(source().includes('\n\n撤销后继续正文'), '退出列表后撤销输入，光标未留在普通正文');
         await changed('Meta+z', s => !s.includes('撤销后继续正文'));
-        await changed('Meta+z', s => /回车子项\n  - \[ \]/.test(s));
+        await changed('Meta+z', s => s === beforeExit);
         await changed('Meta+z', s => s === beforeEnter);
         assert(await evaluate(p, `
           const s=d.getSelection(),n=s.anchorNode.nodeType===1?s.anchorNode:s.anchorNode.parentElement,item=n.closest('li');
           if(!item)return false;
           const r=d.createRange();r.selectNodeContents(item);r.setStart(s.anchorNode,s.anchorOffset);
-          return item.textContent.trim()==='回车子项' && !r.toString().trim();
-        `), '撤销首次回车后光标未留在原任务末尾');
-        await changed('Meta+Shift+z', s => /回车子项\n  - \[ \]/.test(s));
-        await changed('Meta+Shift+z', s => !/回车子项\n  - \[ \]/.test(s));
+          return item.textContent.trim()===${JSON.stringify(label)} && !r.toString().trim();
+        `), label + ' 撤销首次回车后光标未留在原任务末尾');
+        await changed('Meta+Shift+z', s => s === beforeExit);
+        await changed('Meta+Shift+z', s => s === afterExit);
         await page.keyboard.insertText(label + '后的正文'); await synced(p);
         assert(source().includes('\n\n' + label + '后的正文'), '重做退出列表后光标未留在正文');
+        checkPosition();
       }
       await leave(); await choose(label);
       assert.equal(await depth(label), scenario.depth, label + ' 重新渲染后层级错误');
@@ -236,11 +255,6 @@ const until = async (predicate, label) => {
       { label: '删除首项', previous: null },
       { label: '删除单独项', previous: null }
     ];
-    const taskTree = () => evaluate(p, `return Array.from(d.querySelectorAll('li')).map(e=>{
-      const text=Array.from(e.childNodes).filter(n=>!['UL','OL'].includes(n.nodeName)).map(n=>n.textContent).join('').trim();
-      let parent=e,depth=0;while(parent=parent.parentElement)if(['UL','OL'].includes(parent.tagName))depth++;
-      const box=e.querySelector(':scope > input, :scope > p > input');return { text, depth, task:!!box, checked:!!box?.checked };
-    });`);
     for (const { label, previous } of deletions) {
       await choose(label);
       const expected = (await taskTree()).filter(item => item.text !== label);
@@ -307,7 +321,7 @@ const until = async (predicate, label) => {
     result.rounds.push({
       round, status: 'passed', indentOutdent: true, mixedLists: true, preservesSubtrees: true, orderedStart: true, tasks: true, rangeSelection: true, boundaryNoop: true,
       checkboxFocusNavigation: true, undoRedoCaret: true, enterContinuesLevel: true, looseListsStayRich: true, clickWithoutMutation: true, looseTasksUndoRedo: true,
-      looseIndentOutdent: true, paragraphOrder: true, looseEnter: true, doubleEnterExitsList: true, exitPreservesHierarchy: true, exitUndoRedoCaret: true,
+      looseIndentOutdent: true, paragraphOrder: true, looseEnter: true, doubleEnterExitsList: true, exitPreservesHierarchy: true, exitUndoRedoCaret: true, middleExitPosition: true, orderedContinuation: true,
       emptyTaskBackspace: true, deletePreservesNeighbors: true, deleteUndoRedoCaret: true, emptyTaskRowHeight: true, tasksNeverOverlap: true,
       emptyTaskReopenClick: true, emptyTaskReopenTyping: true, emptyTaskReopenBackspace: true, reopen: true
     });

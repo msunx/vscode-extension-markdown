@@ -78,7 +78,7 @@ const until = async (predicate, label) => {
     const inlineMenu = async p => {
       await page.keyboard.press('Meta+/');
       await until(() => evaluate(p, "return !d.querySelector('.folio-insert-menu').hidden;"), '行内菜单');
-      assert.deepEqual(await evaluate(p, "return Array.from(d.querySelectorAll('.folio-menu-item'),e=>e.dataset.module);"), ['link', 'file']);
+      assert.deepEqual(await evaluate(p, "return Array.from(d.querySelectorAll('.folio-menu-item'),e=>e.dataset.module);"), ['link', 'file', 'emoji']);
     };
     const beforeText = async (p, selector, text) => {
       await click(p, selector);
