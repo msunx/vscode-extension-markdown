@@ -86,6 +86,7 @@ body {
 .markdown-body :is(h1, h2, h3, h4, h5, h6) :is(strong, em, a) { color: inherit; }
 .markdown-body s, .markdown-body del { color: var(--folio-muted); }
 .markdown-body a { color: var(--folio-blue); text-decoration: underline; text-decoration-color: #5b709f; text-underline-offset: 3px; }
+.markdown-body a[href] { cursor: pointer; }
 .markdown-body a:hover { text-decoration-color: var(--folio-blue); }
 .markdown-body a:focus-visible, .markdown-body button:focus-visible, .markdown-body summary:focus-visible, .markdown-body input:focus-visible, .folio-table:focus-visible {
   outline: 2px solid var(--folio-accent);
@@ -236,6 +237,51 @@ body {
 .markdown-body tr:last-child td { border-bottom: 0; }
 .markdown-body tbody tr:nth-child(even) { background: color-mix(in srgb, var(--folio-blue) 3%, var(--folio-bg)); }
 .markdown-body tbody tr:hover { background: color-mix(in srgb, var(--folio-blue) 8%, var(--folio-bg)); }
+/* Row and column controls sit outside the scroll surface, so hovering never moves the cells. */
+.folio-table-shell { position: relative; margin: 34px 0 28px; }
+.folio-table-shell > .folio-table { margin: 0; }
+.folio-table-controls { position: absolute; top: 0; left: 0; z-index: 3; pointer-events: none; opacity: 0; transition: opacity 120ms; }
+.folio-table-shell:hover > .folio-table-controls, .folio-table-shell:focus-within > .folio-table-controls,
+.folio-table-shell.has-axis-selection > .folio-table-controls { opacity: 1; }
+.folio-table-controls button { position: absolute; display: block; box-sizing: border-box; margin: 0; padding: 0; border: 0; cursor: pointer; pointer-events: none; }
+.folio-table-shell:hover > .folio-table-controls button, .folio-table-shell:focus-within > .folio-table-controls button,
+.folio-table-shell.has-axis-selection > .folio-table-controls button { pointer-events: auto; }
+.folio-table-grip { background: color-mix(in srgb, var(--folio-blue) 13%, var(--folio-bg)); border-radius: 3px; transition: background-color 120ms; }
+.folio-table-grip.folio-table-column { top: -16px; height: 14px; }
+.folio-table-grip.folio-table-row { left: -16px; width: 14px; }
+.folio-table-grip:hover, .folio-table-grip[aria-pressed="true"] { background: color-mix(in srgb, var(--folio-blue) 48%, var(--folio-bg)); }
+.folio-table-grip.folio-table-row:hover, .folio-table-grip.folio-table-row[aria-pressed="true"] { background: color-mix(in srgb, var(--folio-teal) 48%, var(--folio-bg)); }
+.folio-table-insert { width: 22px; height: 22px; z-index: 2; border-radius: 50%; background: transparent; color: var(--folio-on-accent); transition: background-color 120ms, transform 100ms; }
+.folio-table-insert.folio-table-column { top: -23px; transform: translate(-50%, -50%); --folio-insert-color: var(--folio-blue); }
+.folio-table-insert.folio-table-row { left: -23px; transform: translate(-50%, -50%); --folio-insert-color: var(--folio-teal); }
+.folio-table-insert::before { content: ''; position: absolute; width: 4px; height: 4px; top: 9px; left: 9px; border-radius: 50%; background: var(--folio-muted); }
+.folio-table-insert > span { opacity: 0; font: 20px/22px sans-serif; }
+.folio-table-insert:hover, .folio-table-insert:focus-visible { background: var(--folio-insert-color); }
+.folio-table-insert:hover > span, .folio-table-insert:focus-visible > span { opacity: 1; }
+.folio-table-insert:hover::before, .folio-table-insert:focus-visible::before { opacity: 0; }
+.folio-table-insert:active { transform: translate(-50%, -50%) scale(.92); }
+.folio-table-guide { position: absolute; pointer-events: none; }
+.folio-table-guide[data-axis="column"] { width: 2px; height: 100%; background: var(--folio-blue); transform: translateX(-1px); }
+.folio-table-guide[data-axis="row"] { height: 2px; width: 100%; background: var(--folio-teal); transform: translateY(-1px); }
+.folio-table-controls [hidden], .folio-table-menu[hidden] { display: none; }
+.folio-table-menu { position: fixed; z-index: 90; padding: 4px; border: 1px solid var(--folio-line); border-radius: 6px; background: var(--folio-code-bg); box-shadow: 0 6px 18px #11132155; }
+.folio-table-menu button { min-height: 34px; padding: 6px 12px; border: 0; border-radius: 3px; color: var(--folio-red); background: transparent; font: 13px/1.5 var(--folio-reading-font); cursor: pointer; }
+.folio-table-menu button:not(:disabled):hover { background: var(--folio-surface); }
+.folio-table-menu button:disabled { color: var(--folio-muted); cursor: default; }
+.folio-table-menu button:focus-visible { outline: 2px solid var(--folio-blue); outline-offset: -2px; }
+.markdown-body table[data-folio-table] :is(th, td) { min-width: 90px; max-width: 420px; white-space: normal; overflow-wrap: anywhere; vertical-align: top; transition: background-color 120ms; }
+.markdown-body table[data-folio-table] :is(th, td)[contenteditable="true"] { cursor: text; outline: none; }
+.markdown-body table[data-folio-table] .is-selected-cell {
+  background: color-mix(in srgb, var(--folio-teal) 9%, var(--folio-bg)); box-shadow: inset 0 0 0 1.5px var(--folio-teal);
+}
+.markdown-body table[data-folio-table] .is-selected-axis { background: color-mix(in srgb, var(--folio-blue) 17%, var(--folio-bg)); }
+.folio-block[data-edit-mode="table"].is-editing { animation: folio-edit-focus 160ms ease-out; }
+@media (prefers-reduced-motion: reduce) { .folio-table-controls, .folio-table-controls button, .markdown-body table[data-folio-table] :is(th, td) { transition: none; } }
+@media (forced-colors: active) {
+  .markdown-body table[data-folio-table] :is(.is-selected-cell, .is-selected-axis) { outline: 2px solid Highlight; outline-offset: -2px; }
+  .folio-table-grip, .folio-table-menu { border: 1px solid ButtonText; }
+  .folio-table-grip[aria-pressed="true"], .folio-table-insert:hover { background: Highlight; }
+}
 .markdown-body hr { height: 0; border: 0; border-top: 1px solid var(--folio-line); margin: 31px 0; }
 .markdown-body img, .markdown-body video { max-width: 100%; height: auto; border-radius: 4px; }
 .markdown-body figure { margin: 22px 0; }
@@ -306,6 +352,11 @@ body.vscode-high-contrast .markdown-body li::before, body.vscode-high-contrast .
 body.vscode-high-contrast-light .markdown-body li::before, body.vscode-high-contrast-light .markdown-body li::after { border-color: var(--folio-line); }
 
 /* Source-backed editing uses the same document rhythm as the reading view. */
+body[data-folio-interactive] { display: flex; flex-direction: column; min-height: 100vh; }
+body[data-folio-interactive] > .markdown-body { flex-shrink: 0; width: 100%; }
+.folio-document-end { flex: 1 0 96px; width: 100%; max-width: 760px; min-height: 96px; margin: 0 auto; cursor: text; }
+.folio-document-end[hidden] { display: none; }
+.folio-document-end:focus-visible { outline: 1px solid var(--folio-soft-line); outline-offset: -4px; border-radius: 4px; }
 .folio-block { position: relative; }
 .folio-block-content { outline: none; }
 .folio-block:first-child .folio-block-content > :first-child { margin-top: 0; }

@@ -68,6 +68,29 @@ function taskMarker(line) {
   return /^((?:[ \t]*(?:>[ \t]?|(?:[-+*]|\d+[.)])[ \t]+))+)\[([ xX])\](?=[ \t]|$)/.exec(line);
 }
 
+function addTableSources(md) {
+  md.core.ruler.push('folio_table_sources', state => {
+    const lines = state.src.split('\n');
+    let table = false, cells = [], column = 0;
+    for (const token of state.tokens) {
+      if (token.type === 'table_open' && token.level === 0) {
+        table = true; token.attrSet('data-folio-table', 'true');
+        token.attrSet('data-folio-table-source', lines.slice(...token.map).join('\n').trimEnd());
+      }
+      if (token.type === 'table_close') table = false;
+      if (!table) continue;
+      if (token.type === 'tr_open') {
+        // Match Markdown-it's pipe boundaries, retaining escapes in the original cell source.
+        cells = (lines[token.map[0]] || '').trim().split(/(?<!\\)\|/);
+        if (!cells[0].trim()) cells.shift();
+        if (!cells.at(-1)?.trim()) cells.pop();
+        column = 0;
+      }
+      if (token.type === 'th_open' || token.type === 'td_open') token.attrSet('data-folio-cell-source', (cells[column++] || '').trim());
+    }
+  });
+}
+
 function addEditableBlocks(md) {
   md.core.ruler.push('folio_editable_blocks', state => {
     const output = [];
@@ -99,7 +122,7 @@ function addEditableBlocks(md) {
         && !state.tokens.slice(i, end + 1).some(item => ['fence', 'code_block', 'table_open', 'html_block'].includes(item.type)
           || item.children?.some(child => ['link_open', 'image'].includes(child.type) && child.meta?.isReference));
       const open = new state.Token('folio_block_open', 'section', 1);
-      open.meta = { start: token.map[0], end: finish, mode: rich ? 'rich' : 'source', kind: token.tag || token.type };
+      open.meta = { start: token.map[0], end: finish, mode: token.type === 'table_open' ? 'table' : rich ? 'rich' : 'source', kind: token.tag || token.type };
       output.push(open, ...state.tokens.slice(i, end + 1), new state.Token('folio_block_close', 'section', -1));
       i = end;
     }
@@ -138,6 +161,7 @@ function extendMarkdownIt(md) {
   const closeTable = md.renderer.rules.table_close || ((tokens, index, options, env, self) => self.renderToken(tokens, index, options));
   md.renderer.rules.table_open = (...args) => `<div class="folio-table" tabindex="0" role="region" aria-label="表格，可横向滚动">${openTable(...args)}`;
   md.renderer.rules.table_close = (...args) => `${closeTable(...args)}</div>`;
+  addTableSources(md);
   addEditableBlocks(md);
   return md;
 }

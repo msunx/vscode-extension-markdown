@@ -60,6 +60,14 @@ const until = async (predicate, label) => {
         const s=d.getSelection();s.removeAllRanges();s.addRange(r);`);
     };
     const synced = p => until(() => evaluate(p, "return d.querySelector('.folio-editor-feedback').textContent==='已同步' && d.querySelector('.folio-status').hidden;"), '写回完成');
+    const hoverLink = async (p, selector) => {
+      await evaluate(p, `d.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'});return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));`);
+      const point = await evaluate(p, `const r=d.querySelector(${JSON.stringify(selector)}).getClientRects()[0],f=document.getElementById('active-frame').getBoundingClientRect();
+        return {x:r.x+r.width/2,y:r.y+r.height/2,fx:f.x,fy:f.y};`);
+      const outer = await page.locator(`iframe[src*="id=${p.id}"]`).boundingBox();
+      await page.mouse.move(outer.x + point.fx + point.x, outer.y + point.fy + point.y);
+      assert(await evaluate(p, `const e=d.elementFromPoint(${point.x},${point.y});return e?.closest(${JSON.stringify(selector)}) && d.defaultView.getComputedStyle(e).cursor==='pointer';`), '链接悬停应显示手型');
+    };
     const picker = page.locator('.quick-input-widget');
     const openPicker = async (p, mouse = false) => {
       await until(() => evaluate(p, "return !d.querySelector('.folio-insert-menu').hidden && !!d.querySelector('[data-module=file]');"), '项目文件模块');
@@ -103,7 +111,9 @@ const until = async (predicate, label) => {
     await until(async () => source() === beforeCancel && await evaluate(p, "return !d.querySelector('a[href*=\"docs/\"]') && d.activeElement.isContentEditable;"), '撤销文件链接');
     await page.keyboard.press('Meta+Shift+z');
     await until(async () => source() === inserted && await evaluate(p, "return !!d.querySelector('a[href*=\"docs/\"]') && d.activeElement.isContentEditable;"), '重做文件链接');
-    await save(p); await click(p, 'a[href*="docs/"]');
+    await save(p); await hoverLink(p, 'a[href*="docs/"]'); await page.keyboard.press('Escape');
+    await until(() => evaluate(p, "return !d.querySelector('.folio-block.is-editing');"), '结束编辑');
+    await hoverLink(p, 'a[href*="docs/"]'); await click(p, 'a[href*="docs/"]');
     assert.equal(await evaluate(p, 'return d.defaultView.__folioLinkEscapeCount;'), 0, '链接点击冒泡到 Cursor 的外部链接处理器'); done('markdown');
     result.checks.push('原生选择框、搜索、取消、撤销重做、特殊字符链接');
     await stage('code'); p = await preview();
@@ -118,8 +128,11 @@ const until = async (predicate, label) => {
     await stage('list'); p = await preview();
     await click(p, 'li li .folio-task-label', true); await page.keyboard.press('Meta+/'); await openPicker(p);
     await select('src/example.js'); await until(() => (source().match(/\.\.\/src\/example\.js/g) || []).length === 2, 'Todo 链接写入');
-    await synced(p); await save(p); done('list');
+    await synced(p); await save(p); await hoverLink(p, 'li li a[href]'); await page.keyboard.press('Escape');
+    await until(() => evaluate(p, "return !d.querySelector('.folio-block.is-editing');"), '结束 Todo 编辑');
+    await hoverLink(p, 'li li a[href]'); done('list');
     result.checks.push('子级 Todo 保留复选框和层级');
+    result.checks.push('正文与嵌套 Todo 的内部链接在阅读、编辑状态下悬停显示手型');
     await stage('inline');
     await evaluate(p, "for(const e of d.querySelectorAll('p'))if(e.textContent.startsWith('行内位置'))e.dataset.fileTarget='inline';");
     await click(p, '[data-file-target=inline]', true); await page.keyboard.insertText('、正常标点/正常斜杠'); await synced(p);

@@ -15,15 +15,23 @@ exports.run = async () => {
   const result = { rounds: [], checks: [] };
   const stage = name => fs.writeFileSync(path.join(runtime, 'editing-stage.json'), JSON.stringify({ stage: name }));
   const done = name => until(() => fs.existsSync(path.join(runtime, `editing-${name}-done`)), name);
+  let watchedDocument;
+  const snapshot = () => {
+    if (!watchedDocument) return;
+    fs.writeFileSync(path.join(runtime, 'editing-source-next.json'), JSON.stringify({ source: watchedDocument.getText(), version: watchedDocument.version }));
+    fs.renameSync(path.join(runtime, 'editing-source-next.json'), path.join(runtime, 'editing-source.json'));
+  };
+  const listener = vscode.workspace.onDidChangeTextDocument(event => { if (event.document === watchedDocument) snapshot(); });
   try {
     await vscode.extensions.getExtension('muyang.folio-markdown').activate();
     const { updateBlock } = require('../src/preview');
     for (let round = 1; round <= 3; round++) {
       const uri = vscode.Uri.file(path.join(runtime, `editing-${round}.md`));
-      const original = round === 2 ? fixture.replace(/\n/g, '\r\n') : fixture;
+      const ending = round === 2 ? '\n## 末尾任务\n\n- [ ] 保留父任务\n  - [x] 保留子任务' : round === 3 ? '\n```text\n末尾代码保持原样\n```' : '';
+      const original = round === 2 ? (fixture + ending).replace(/\n/g, '\r\n') : fixture + ending;
       fs.writeFileSync(uri.fsPath, original);
       const document = await vscode.workspace.openTextDocument(uri);
-      await vscode.window.showTextDocument(document);
+      watchedDocument = document; snapshot(); await vscode.window.showTextDocument(document);
       stage(`round-${round}`); await done(`round-${round}`);
       const content = document.getText();
       assert(content.startsWith('# Folio · 编辑预览'), '标题编辑与撤销改变了原文');
@@ -33,6 +41,8 @@ exports.run = async () => {
       assert(content.includes('**重点**') && content.includes('`代码`'), '行内格式丢失');
       assert(content.includes('const color = "#24273A";'), '未编辑的代码变化');
       assert(content.includes('| 项目 | 状态 |'), '未编辑表格变化');
+      assert(content.includes('撤销后末尾续写') && content.includes('- [ ] 新增末尾任务'), '末尾新增内容丢失');
+      if (ending) assert(content.includes(ending.replace(/\n/g, round === 2 ? '\r\n' : '\n')), '追加内容改变了原来的末尾组件');
       if (round === 2) assert(!/(?<!\r)\n/.test(content), 'CRLF 被破坏');
       assert(await document.save());
       assert.equal(fs.readFileSync(uri.fsPath, 'utf8'), content, '保存读回不一致');
@@ -46,7 +56,9 @@ exports.run = async () => {
       let failure;
       try { await updateBlock(document, { base: original, start: 0, end: 1, text: 'x' }); } catch (error) { failure = error; }
       assert(failure && document.getText() === content, '过期编辑覆盖了原文');
-      result.rounds.push({ round, status: 'passed', crlf: round === 2, saveReadback: true, undoRedo: true, staleRejected: true });
+      result.rounds.push({
+        round, status: 'passed', crlf: round === 2, saveReadback: true, undoRedo: true, staleRejected: true, appendEnd: true, ending: round === 1 ? 'table' : round === 2 ? 'todo' : 'code'
+      });
     }
     result.checks.push('真实预览输入、模块选择与任务回写', '保存读回、CRLF、宿主撤销/重做、过期版本拒绝');
     const emptyUri = vscode.Uri.file(path.join(runtime, 'editing-empty.md')); fs.writeFileSync(emptyUri.fsPath, '');
@@ -67,7 +79,9 @@ exports.run = async () => {
     try {
       const document = await vscode.workspace.openTextDocument(vscode.Uri.parse('folio-edit-readonly:/draft.md'));
       let failure; try { await updateBlock(document, { base: document.getText(), start: 0, end: 1, text: 'x' }); } catch (error) { failure = error; }
-      assert(failure?.message.includes('只读')); assert.equal(document.getText(), readonlyContent.toString());
+      assert(failure?.message.includes('只读'));
+      await vscode.window.showTextDocument(document); stage('readonly'); await done('readonly');
+      assert.equal(document.getText(), readonlyContent.toString());
     } finally { provider.dispose(); events.dispose(); }
     result.checks.push('只读文档拒绝写入');
     const failedEvents = new vscode.EventEmitter();
@@ -86,5 +100,5 @@ exports.run = async () => {
     } finally { failedProvider.dispose(); failedEvents.dispose(); }
     result.status = 'passed'; stage('complete');
   } catch (error) { result.status = 'failed'; result.error = error.stack; stage('failed'); throw error; }
-  finally { fs.writeFileSync(path.join(evidence, 'editing-host-verification.json'), JSON.stringify(result, null, 2)); }
+  finally { listener.dispose(); fs.writeFileSync(path.join(evidence, 'editing-host-verification.json'), JSON.stringify(result, null, 2)); }
 };

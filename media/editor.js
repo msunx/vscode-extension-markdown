@@ -29,7 +29,8 @@
     if (node.nodeType === Node.TEXT_NODE) return inline(node);
     if (!(node instanceof Element)) return '';
     const tag = node.tagName.toLowerCase();
-    if (node.matches('.folio-block-tools, .folio-code-header, button, input')) return '';
+    if (node.matches('.folio-block-tools, .folio-code-header, .folio-table-controls, button, input')) return '';
+    if (tag === 'table') return window.FolioTables.serialize(node, inline);
     if (/^h[1-6]$/.test(tag)) return `${'#'.repeat(Number(tag[1]))} ${Array.from(node.childNodes, inline).join('').trim()}\n\n`;
     if (tag === 'p') return `${Array.from(node.childNodes, inline).join('').trimEnd()}\n\n`;
     if (tag === 'pre') {
@@ -65,7 +66,7 @@
     if (tag === 'blockquote') return Array.from(node.childNodes).filter(child => child.nodeType !== Node.TEXT_NODE || child.textContent.trim())
       .map(serialize).join('').trimEnd().split('\n').map(line => '> ' + line).join('\n') + '\n\n';
     if (tag === 'hr') return '---\n\n';
-    if (tag === 'div' && !Array.from(node.children).some(child => /^(P|H[1-6]|UL|OL|PRE|BLOCKQUOTE|DIV|HR)$/.test(child.tagName))) return inline(node) + '\n\n';
+    if (tag === 'div' && !Array.from(node.children).some(child => /^(P|H[1-6]|UL|OL|PRE|BLOCKQUOTE|DIV|HR|TABLE)$/.test(child.tagName))) return inline(node) + '\n\n';
     return Array.from(node.childNodes, serialize).join('');
   }
 
@@ -100,6 +101,15 @@
     let historyVersion = 0, historyCaret = null;
     let fileRequest = null;
     let emojiRequest = null;
+    const tables = window.FolioTables({
+      canEdit: () => writable && !conflicted && !composing,
+      onActivate: table => table.isConnected && open(table.closest('.folio-block')),
+      onSelect: () => { if (active) active.lastHTML = active.content.innerHTML; },
+      onChange: change => {
+        if (!active || !writable || conflicted || composing) return;
+        sync(); const before = source, caret = captureCaret(); change(); sync(true); rememberListEdit(before, caret, captureCaret());
+      }
+    });
     const emojiPicker = window.FolioEmojiPicker({ onSelect: insertEmoji, onClose: closeEmoji });
     const menu = document.createElement('div');
     menu.className = 'folio-insert-menu'; menu.hidden = true; menu.setAttribute('role', 'listbox'); menu.id = 'folio-insert-menu'; menu.setAttribute('aria-label', '插入模块');
@@ -109,12 +119,14 @@
     const copy = document.createElement('button'); copy.textContent = '复制草稿';
     const reload = document.createElement('button'); reload.textContent = '放弃草稿并刷新';
     recovery.append(copy, reload); document.body.append(menu, footer, recovery);
+    const documentEnd = document.createElement('div'); documentEnd.className = 'folio-document-end'; documentEnd.hidden = true; documentEnd.tabIndex = 0;
+    documentEnd.setAttribute('role', 'button'); documentEnd.setAttribute('aria-label', '在文档末尾继续输入'); main.after(documentEnd);
     const eol = () => source.includes('\r\n') ? '\r\n' : '\n';
     const state = () => host.getState() || {};
     const draft = () => active ? source.slice(0, active.start) + value() + source.slice(active.end) : source || state().draft?.markdown || '';
     function feedback(text) { footer.textContent = text; footer.hidden = !text; }
     function remember() { host.setState({ ...state(), draft: { markdown: draft() } }); }
-    function fail(message) { conflicted = true; closeMenu(); showError(message); feedback('草稿未同步'); recovery.hidden = false; remember(); settle(); }
+    function fail(message) { conflicted = true; documentEnd.hidden = true; closeMenu(); showError(message); feedback('草稿未同步'); recovery.hidden = false; remember(); settle(); }
     copy.addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(draft()); copy.textContent = '草稿已复制'; } catch { showError('复制失败，请选中编辑内容后手动复制。'); }
     });
@@ -127,11 +139,13 @@
     function attach(message) {
       closeEmoji(false);
       source = message.source || ''; writable = message.writable !== false;
+      documentEnd.hidden = !writable || conflicted;
       const lines = offsets(source);
       for (const block of main.querySelectorAll('.folio-block')) {
         block.dataset.sourceStart = lines[Number(block.dataset.startLine)] ?? source.length;
         block.dataset.sourceEnd = lines[Number(block.dataset.endLine)] ?? source.length;
         const content = block.querySelector('.folio-block-content');
+        tables.prepare(content, writable);
         if (writable) { content.tabIndex = 0; content.setAttribute('aria-label', '编辑此内容'); }
       }
       if (writable && !source.trim() && !historyCaret?.emptyBlock) insertEmptyBlock();
@@ -150,8 +164,15 @@
       if (selection.anchorNode && target.contains(selection.anchorNode)) range.setEnd(selection.anchorNode, selection.anchorOffset);
       const siblings = Array.from(active.content.childNodes);
       const before = target === active.content ? '' : siblings.slice(0, siblings.indexOf(target)).map(serialize).join('');
-      const start = active.start + (active.changed ? (active.prefix + before).replace(/\r?\n/g, eol()).length : 0);
+      // An untouched end paragraph still sits after its pending Markdown separator when redo restores it.
+      const start = active.start + (active.changed || active.block.dataset.documentEnd === 'true' ? (active.prefix + before).replace(/\r?\n/g, eol()).length : 0);
       const saved = { start, offset: range.toString().length, atEnd: range.toString().length === target.textContent.length, raw: false };
+      const cell = tables.atSelection();
+      if (cell && active.content.contains(cell)) {
+        const cellRange = document.createRange(); cellRange.selectNodeContents(cell); cellRange.setEnd(selection.anchorNode, selection.anchorOffset);
+        saved.tableCell = { row: cell.parentElement.rowIndex, column: cell.cellIndex, offset: cellRange.toString().length };
+      }
+      if (active.block.dataset.documentEnd === 'true') saved.documentEnd = true;
       const item = (selection.anchorNode?.nodeType === Node.ELEMENT_NODE ? selection.anchorNode : selection.anchorNode?.parentElement)?.closest('li');
       if (item && target.contains(item)) {
         // Rendering nested lists adds whitespace nodes; restore by item and its own text, not those formatting newlines.
@@ -169,10 +190,28 @@
     }
     function restoreCaret(saved) {
       if (saved.emptyBlock) { insertEmptyBlock(saved.start, saved.end); return; }
+      if (saved.documentEnd && saved.start >= source.length) { editDocumentEnd(); return; }
       const blocks = Array.from(main.querySelectorAll('.folio-block'));
       const block = blocks.find(item => Number(item.dataset.sourceStart) === saved.start)
         || blocks.find(item => Number(item.dataset.sourceStart) <= saved.start && Number(item.dataset.sourceEnd) > saved.start) || blocks.at(-1);
       if (!block || !open(block)) return;
+      if (saved.documentEnd && block === blocks.at(-1)) block.dataset.documentEnd = 'true';
+      if (saved.tableCell) {
+        const table = active.content.querySelector('table[data-folio-table]'), position = saved.tableCell;
+        const row = table?.rows[Math.min(position.row, table.rows.length - 1)], cell = row?.cells[Math.min(position.column, row.cells.length - 1)];
+        if (cell) {
+          tables.select(cell, true);
+          let remaining = position.offset; const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT); let node;
+          while ((node = walker.nextNode())) {
+            if (remaining <= node.textContent.length) {
+              const range = document.createRange(); range.setStart(node, remaining); range.collapse(true);
+              const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); break;
+            }
+            remaining -= node.textContent.length;
+          }
+          return;
+        }
+      }
       active.input.focus({ preventScroll: true });
       if (active.raw) { const offset = Math.min(saved.offset, active.input.value.length); active.input.setSelectionRange(offset, offset); return; }
       if (saved.afterList) {
@@ -226,12 +265,17 @@
         content.hidden = true;
         const input = document.createElement('textarea'); input.className = 'folio-source-input'; input.setAttribute('aria-label', '编辑此块的 Markdown'); input.spellcheck = false;
         input.value = original; block.prepend(input); active.input = input; resize(); input.focus();
-      } else {
+      } else if (block.dataset.editMode !== 'table') {
         content.contentEditable = 'true'; content.setAttribute('role', 'textbox'); content.setAttribute('aria-multiline', 'true'); content.spellcheck = false;
         document.execCommand('defaultParagraphSeparator', false, 'p');
       }
+      if (!active.raw) { tables.activate(content); active.lastHTML = content.innerHTML; }
       feedback(''); enhance();
-      if (focus) { active.input.focus(); if (!active.raw) caretEnd(content); }
+      if (focus) {
+        const cell = block.dataset.editMode === 'table' && content.querySelector('th, td');
+        if (cell) tables.select(cell, true);
+        else { active.input.focus(); if (!active.raw) caretEnd(content); }
+      }
       return true;
     }
     function caretEnd(element) {
@@ -280,6 +324,7 @@
       closeEmoji(false);
       cancelFileRequest();
       sync(); closeMenu(); active.block.classList.remove('is-editing'); active.content.contentEditable = 'false'; active.content.removeAttribute('role');
+      tables.deactivate(active.content);
       if (active.raw) { active.input.readOnly = true; active.input.classList.add('is-settling'); }
       if (conflicted) return;
       active = null; enhance();
@@ -342,10 +387,26 @@
       main.insertBefore(block, next || null);
       open(block, true); active.tail ||= eol() + eol(); return block;
     }
+    function editDocumentEnd() {
+      if (!writable || conflicted || composing) return;
+      const last = main.querySelector('.folio-block:last-child'), paragraph = last?.querySelector('.folio-block-content')?.lastElementChild;
+      if (last?.dataset.editMode === 'rich' && !source.slice(Number(last.dataset.sourceEnd)).trim() && paragraph?.matches('p')
+        && !paragraph.textContent.trim() && !paragraph.querySelector(':not(br)')) {
+        if (open(last)) {
+          last.dataset.documentEnd = 'true';
+          if (active.start === active.end) active.tail ||= eol() + eol();
+          caretEnd(paragraph);
+        }
+        return;
+      }
+      finish(false);
+      const block = insertEmptyBlock();
+      if (block) block.dataset.documentEnd = 'true';
+    }
     function lineAtCaret() {
       const selection = window.getSelection(); if (!active || active.raw || !selection.rangeCount) return null;
       const node = selection.anchorNode?.nodeType === Node.ELEMENT_NODE ? selection.anchorNode : selection.anchorNode?.parentElement;
-      let line = node?.closest('p, h1, h2, h3, h4, h5, h6, li, pre');
+      let line = node?.closest('th, td') || node?.closest('p, h1, h2, h3, h4, h5, h6, li, pre');
       if (!line || !active.content.contains(line) || line.closest('pre')) return null;
       if (line.tagName === 'P' && line.parentElement.tagName === 'LI') line = line.parentElement;
       const range = selection.getRangeAt(0).cloneRange(); range.selectNodeContents(line); range.setEnd(selection.anchorNode, selection.anchorOffset);
@@ -500,7 +561,7 @@
       const match = location && /^[/、]([^\n/、]{0,50})$/.exec(location.before);
       if (!location || (!match && !force)) { closeMenu(); return; }
       const query = match ? match[1].toLowerCase() : '';
-      const inlineMode = force && !match && Boolean(location.line.textContent.trim());
+      const inlineMode = /^(TH|TD)$/.test(location.line.tagName) || force && !match && Boolean(location.line.textContent.trim());
       const items = modules.filter(item => (!inlineMode || ['link', 'file', 'emoji'].includes(item[0])) && `${item[0]} ${item[1]} ${item[3]}`.toLowerCase().includes(query));
       const selected = menuState?.query === query ? Math.min(menuState.selected, items.length - 1) : 0;
       const opening = menu.hidden;
@@ -587,12 +648,8 @@
       } else if (id === 'divider') {
         node = document.createElement('div'); node.append(document.createElement('hr')); const p = document.createElement('p'); p.textContent = remainder; if (!remainder) p.append(document.createElement('br')); node.append(p);
       } else if (id === 'table') {
-        node = document.createElement('p'); node.textContent = `| 列一 | 列二 |\n| --- | --- |\n| ${remainder.replace(/\|/g, '\\|') || '内容'} | 内容 |`;
-        replaceLine(node, target, false);
-        // Tables use the source editor so alignment, escapes and extended cell syntax remain intact.
-        const markdown = value().replace(/\\\|/g, '|');
-        active.content.hidden = true; active.raw = true; const input = document.createElement('textarea'); input.className = 'folio-source-input'; input.setAttribute('aria-label', '编辑表格 Markdown');
-        input.value = markdown; active.block.prepend(input); active.input = input; resize(); input.focus(); sync(); return;
+        node = window.FolioTables.create(remainder); replaceLine(node, target, false);
+        tables.activate(active.content); tables.select(node.querySelector('tbody td'), true); return;
       } else { node = document.createElement(/^h[1-6]$/.test(id) ? id : 'p'); node.textContent = remainder; if (!remainder) node.append(document.createElement('br')); }
       if (preserved && !['code', 'divider'].includes(id)) (node.querySelector('li, p') || node).replaceChildren(...preserved);
       replaceLine(node, target);
@@ -704,24 +761,35 @@
     document.addEventListener('pointerdown', event => {
       if (emojiPicker.element.contains(event.target)) return;
       if (emojiRequest) closeEmoji(false);
-      if (!(event.target instanceof Element) || menu.contains(event.target) || recovery.contains(event.target) || event.target.closest('.folio-resource-form')) return;
+      if (!(event.target instanceof Element) || menu.contains(event.target) || recovery.contains(event.target) || event.target.closest('.folio-resource-form, .folio-table-controls, .folio-table-menu')) return;
       if (event.altKey) { finish(); return; }
       if (event.target.closest('input, a, button, summary, textarea')) return;
+      if (!documentEnd.hidden && event.button === 0 && !event.shiftKey && !event.metaKey && !event.ctrlKey
+        && (event.target === documentEnd || (event.target === document.body || event.target === document.documentElement)
+          && event.clientY >= documentEnd.getBoundingClientRect().top)) {
+        event.preventDefault(); editDocumentEnd(); return;
+      }
       const block = event.target.closest('.folio-block');
       if (block) {
         if (open(block)) {
           if (active.raw) { event.preventDefault(); active.input.focus(); }
+          else if (event.target.closest('th, td')?.closest('table[data-folio-table]')) tables.select(event.target.closest('th, td'));
           else if (event.button === 0 && !event.shiftKey && focusEmptyTask(event)) event.preventDefault();
         }
       } else finish();
     });
-    document.addEventListener('focusin', event => { if (emojiRequest && !emojiPicker.element.contains(event.target)) closeEmoji(false); });
+    document.addEventListener('focusin', event => {
+      if (emojiRequest && !emojiPicker.element.contains(event.target)) closeEmoji(false);
+      const cell = event.target.closest?.('th, td');
+      if (cell?.closest('table[data-folio-table]') && active?.content.contains(cell)) tables.select(cell);
+    });
     main.addEventListener('click', event => {
       if (active?.content.contains(event.target) && event.target.closest('label.folio-task-label')) event.preventDefault();
     });
     main.addEventListener('input', event => { if (active?.input.contains(event.target) || active?.input === event.target) { resize(); if (!composing && !event.isComposing) { sync(); updateMenu(); } } });
     main.addEventListener('compositionstart', () => { composing = true; closeMenu(); });
     main.addEventListener('compositionend', () => { composing = false; sync(); updateMenu(); });
+    main.addEventListener('beforeinput', tables.beforeInput);
     main.addEventListener('paste', event => {
       if (!active || active.raw || !active.content.contains(event.target)) return;
       event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain')); sync();
@@ -731,6 +799,7 @@
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's' && active) { event.preventDefault(); event.stopPropagation(); void flush().then(ok => { if (ok) host.postMessage({ type: 'save' }); }); return; }
       if (emojiPicker.element.contains(event.target)) return;
       if (event.target.closest?.('.folio-resource-form')) return;
+      if (event.target === documentEnd && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); editDocumentEnd(); return; }
       if (event.key === 'Enter' && event.target.classList?.contains('folio-block-content') && active?.content !== event.target) { event.preventDefault(); open(event.target.closest('.folio-block'), true); return; }
       if (!active) return;
       if (event.key === 'Backspace' && !event.metaKey && !event.ctrlKey && !event.altKey && event.target.isContentEditable
@@ -748,6 +817,7 @@
         else if (event.key === 'Escape') { event.preventDefault(); closeMenu(); }
         return;
       }
+      if (tables.keydown(event)) return;
       if (event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !active.raw
         && !event.target.closest('input, button, textarea, select')) {
         if (enterList()) { event.preventDefault(); event.stopPropagation(); closeMenu(); return; }
@@ -756,7 +826,7 @@
           event.preventDefault(); const p = document.createElement('p'); p.append(document.createElement('br')); location.line.after(p); caretEnd(p); sync(); return;
         }
       }
-      if (event.key === 'Escape') { event.preventDefault(); active.input.blur(); finish(); }
+      if (event.key === 'Escape') { event.preventDefault(); document.activeElement.blur(); finish(); }
     }, true);
     window.addEventListener('resize', positionMenu);
     window.addEventListener('scroll', positionMenu, { passive: true });
