@@ -7,6 +7,80 @@
   let version;
   let pendingTask = null;
   let editor;
+  const taskStates = { pending: '待办', progress: '进行中', done: '已完成' };
+  let taskMenu, taskMenuTarget;
+  const taskState = checkbox => checkbox.dataset.folioTaskState || (checkbox.checked ? 'done' : 'pending');
+
+  function paintTask(checkbox, state = taskState(checkbox)) {
+    checkbox.dataset.folioTaskState = state;
+    checkbox.checked = state === 'done'; checkbox.indeterminate = state === 'progress';
+    const item = checkbox.closest('li.task-list-item');
+    item?.classList.toggle('folio-task-complete', state === 'done');
+    item?.classList.toggle('folio-task-progress', state === 'progress');
+    const label = checkbox.nextElementSibling?.matches('.folio-task-label') ? checkbox.nextElementSibling.textContent.trim() : '';
+    checkbox.setAttribute('aria-label', `${taskStates[state]}：${label || '待办'}。右键切换状态`);
+    checkbox.title = host ? `${taskStates[state]} · 点击${state === 'done' ? '取消完成' : '完成'}；右键选择状态；Shift＋点击轮换` : '使用右上角 Folio 图标切换任务状态';
+    if (host) { checkbox.setAttribute('aria-haspopup', 'menu'); checkbox.setAttribute('aria-keyshortcuts', 'Shift+Space Shift+F10'); }
+  }
+
+  function changeTask(checkbox, state) {
+    const previous = taskState(checkbox);
+    if (!host || !Object.hasOwn(taskStates, state) || checkbox.disabled || pendingTask || version === undefined || (editor && !editor.allowTask(checkbox))) {
+      paintTask(checkbox, previous); return;
+    }
+    paintTask(checkbox, state);
+    if (previous === state) return;
+    showError('');
+    if (editor?.handleTask(checkbox)) return;
+    if (!checkbox.hasAttribute('data-folio-task-line')) { paintTask(checkbox, previous); return; }
+    pendingTask = {
+      type: 'task', version, line: Number(checkbox.dataset.folioTaskLine), character: Number(checkbox.dataset.folioTaskCharacter),
+      source: checkbox.dataset.folioTaskSource, state, previous
+    };
+    enhanceContent(); host.postMessage(pendingTask);
+  }
+
+  function closeTaskMenu(focus = false) {
+    if (!taskMenuTarget) return;
+    const target = taskMenuTarget; taskMenuTarget = null; taskMenu.hidden = true; target.setAttribute('aria-expanded', 'false');
+    if (focus && target.isConnected) target.focus({ preventScroll: true });
+  }
+
+  function openTaskMenu(checkbox) {
+    if (checkbox.disabled || !host || !editor?.allowTask(checkbox)) return;
+    closeTaskMenu();
+    if (!taskMenu) {
+      taskMenu = document.createElement('div'); taskMenu.className = 'folio-task-menu'; taskMenu.hidden = true;
+      taskMenu.setAttribute('role', 'menu'); taskMenu.setAttribute('aria-label', '任务状态');
+      for (const [state, label] of Object.entries(taskStates)) {
+        const button = document.createElement('button'); button.type = 'button'; button.dataset.taskState = state;
+        button.setAttribute('role', 'menuitemradio');
+        const icon = document.createElement('span'); icon.className = 'folio-task-state-icon'; icon.setAttribute('aria-hidden', 'true');
+        button.append(icon, document.createTextNode(label)); taskMenu.append(button);
+      }
+      taskMenu.addEventListener('click', event => {
+        const button = event.target.closest('button[data-task-state]'); if (!button || !taskMenuTarget) return;
+        event.preventDefault(); event.stopPropagation(); const target = taskMenuTarget;
+        closeTaskMenu(true); changeTask(target, button.dataset.taskState);
+      });
+      taskMenu.addEventListener('keydown', event => {
+        const buttons = [...taskMenu.querySelectorAll('button')], index = buttons.indexOf(document.activeElement);
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          event.preventDefault(); event.stopPropagation();
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+          buttons[next].focus();
+        } else if (event.key === 'Escape' || event.key === 'Tab') { event.preventDefault(); event.stopPropagation(); closeTaskMenu(true); }
+      });
+      document.body.append(taskMenu);
+    }
+    taskMenuTarget = checkbox; taskMenu.hidden = false; checkbox.setAttribute('aria-expanded', 'true');
+    const buttons = [...taskMenu.querySelectorAll('button')];
+    for (const button of buttons) button.setAttribute('aria-checked', String(button.dataset.taskState === taskState(checkbox)));
+    const rect = checkbox.getBoundingClientRect(), width = taskMenu.offsetWidth, height = taskMenu.offsetHeight;
+    taskMenu.style.left = `${Math.max(8, Math.min(rect.right + 8, window.innerWidth - width - 8))}px`;
+    taskMenu.style.top = `${Math.max(8, Math.min(rect.top, window.innerHeight - height - 8))}px`;
+    buttons.find(button => button.dataset.taskState === taskState(checkbox))?.focus({ preventScroll: true });
+  }
 
   function taskSelector(task) {
     return `input[data-folio-task-line="${task.line}"][data-folio-task-character="${task.character}"]`;
@@ -25,7 +99,7 @@
       if (message?.type === 'error') {
         if (pendingTask) {
           const checkbox = document.querySelector(taskSelector(pendingTask));
-          if (checkbox) checkbox.checked = !pendingTask.checked;
+          if (checkbox) paintTask(checkbox, pendingTask.previous);
         }
         pendingTask = null;
         enhanceContent();
@@ -33,6 +107,7 @@
         return;
       }
       if (message?.type !== 'content' || typeof message.html !== 'string') return;
+      closeTaskMenu();
       const main = document.querySelector('.markdown-body');
       const focus = document.activeElement?.dataset;
       const focusedTask = focus?.folioTaskLine ? { line: Number(focus.folioTaskLine), character: Number(focus.folioTaskCharacter) } : pendingTask;
@@ -49,6 +124,7 @@
       showError(message.error);
       enhanceContent();
       editor?.attach(message);
+      if (message.writable === false) enhanceContent();
       const checkbox = focusedTask && main.querySelector(taskSelector(focusedTask));
       checkbox?.focus({ preventScroll: true });
       window.scrollTo(0, scroll);
@@ -60,17 +136,31 @@
     document.addEventListener('change', event => {
       const checkbox = event.target;
       if (!(checkbox instanceof HTMLInputElement) || !checkbox.matches('.task-list-item-checkbox')) return;
-      if (editor?.handleTask(checkbox)) return;
-      if (!checkbox.hasAttribute('data-folio-task-line') || (editor && !editor.allowTask(checkbox))) return;
-      if (pendingTask || version === undefined) return;
-      pendingTask = {
-        type: 'task', version, line: Number(checkbox.dataset.folioTaskLine), character: Number(checkbox.dataset.folioTaskCharacter),
-        source: checkbox.dataset.folioTaskSource, checked: checkbox.checked
-      };
-      showError('');
-      enhanceContent();
-      host.postMessage(pendingTask);
+      changeTask(checkbox, checkbox.checked ? 'done' : 'pending');
     });
+    document.addEventListener('contextmenu', event => {
+      const checkbox = event.target.closest?.('input.task-list-item-checkbox'); if (!checkbox || checkbox.disabled) return;
+      event.preventDefault(); event.stopPropagation(); openTaskMenu(checkbox);
+    });
+    document.addEventListener('click', event => {
+      const checkbox = event.target.closest?.('input.task-list-item-checkbox'); if (!checkbox || !event.shiftKey || checkbox.disabled) return;
+      event.preventDefault(); event.stopPropagation();
+      const next = { pending: 'progress', progress: 'done', done: 'pending' }[taskState(checkbox)];
+      // Canceled checkbox clicks restore native state after dispatch; apply our state after that rollback.
+      setTimeout(() => { if (checkbox.isConnected) changeTask(checkbox, next); }, 0);
+    }, true);
+    document.addEventListener('keydown', event => {
+      const checkbox = event.target.closest?.('input.task-list-item-checkbox'); if (!checkbox || checkbox.disabled) return;
+      if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') { event.preventDefault(); event.stopPropagation(); openTaskMenu(checkbox); }
+      else if (event.shiftKey && event.key === ' ') {
+        event.preventDefault(); event.stopPropagation(); changeTask(checkbox, { pending: 'progress', progress: 'done', done: 'pending' }[taskState(checkbox)]);
+      }
+    }, true);
+    document.addEventListener('pointerdown', event => { if (taskMenuTarget && !taskMenu.contains(event.target)) closeTaskMenu(); }, true);
+    document.addEventListener('focusin', event => { if (taskMenuTarget && !taskMenu.contains(event.target)) closeTaskMenu(); });
+    window.addEventListener('scroll', () => closeTaskMenu(), { passive: true });
+    window.addEventListener('resize', () => closeTaskMenu());
+    window.addEventListener('blur', () => closeTaskMenu());
     document.addEventListener('dblclick', event => {
       if (!event.altKey || editor?.editing || !(event.target instanceof Element) || event.target.closest('a, button, input, summary')) return;
       const line = event.target.closest('[data-line]')?.getAttribute('data-line');
@@ -140,15 +230,36 @@
   document.addEventListener('click', handleClick);
   document.addEventListener('auxclick', handleClick);
 
+  function refreshDateHeadings() {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    document.querySelectorAll('.markdown-body h1:not(.folio-template-preview h1)').forEach(heading => {
+      // Keep real text and anchors intact for editing, copying and Markdown serialization.
+      heading.classList.toggle('folio-today-heading', heading.textContent.trim() === today);
+    });
+  }
+
+  let dateTimer;
+  function watchLocalDate() {
+    clearTimeout(dateTimer);
+    refreshDateHeadings();
+    const now = new Date(), midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    // Also notice clock/timezone changes; focus refreshes immediately after the app resumes.
+    dateTimer = setTimeout(watchLocalDate, Math.min(60000, Math.max(100, midnight - now + 100)));
+  }
+  window.addEventListener('focus', watchLocalDate);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) watchLocalDate(); });
+
   function enhanceContent() {
+    refreshDateHeadings();
     document.querySelectorAll('.folio-copy:not([data-folio-ready])').forEach(button => {
       button.dataset.folioReady = 'true';
       button.setAttribute('aria-live', 'polite');
     });
-    document.querySelectorAll('input.task-list-item-checkbox').forEach((checkbox, index) => {
+    document.querySelectorAll('input.task-list-item-checkbox:not(.folio-template-preview input)').forEach((checkbox, index) => {
       const item = checkbox.closest('li.task-list-item');
       if (!item) return;
-      if (editor?.owns(checkbox)) { checkbox.disabled = !editor.allowTask(checkbox); item.classList.toggle('folio-task-complete', checkbox.checked); return; }
+      if (editor?.owns(checkbox)) { checkbox.disabled = !editor.allowTask(checkbox); paintTask(checkbox); return; }
       if (!checkbox.id) checkbox.id = `folio-task-${checkbox.dataset.folioTaskLine || 'readonly'}-${index}`;
       if (!checkbox.nextElementSibling?.classList.contains('folio-task-label')) {
         const label = document.createElement('label');
@@ -168,28 +279,27 @@
         taskText.replaceChildren(document.createElement('br'));
       }
       // Nested task states must not mark their parent task as completed.
-      item.classList.toggle('folio-task-complete', checkbox.checked);
+      paintTask(checkbox);
       checkbox.disabled = !host || version === undefined || !checkbox.hasAttribute('data-folio-task-line') || Boolean(pendingTask) || Boolean(editor && !editor.allowTask(checkbox));
       checkbox.classList.toggle('is-pending', Boolean(pendingTask && Number(checkbox.dataset.folioTaskLine) === pendingTask.line));
-      const label = checkbox.nextElementSibling?.textContent.trim() || '待办';
-      checkbox.setAttribute('aria-label', `${checkbox.checked ? '取消完成' : '完成'}：${label}`);
-      checkbox.title = host ? '勾选后同步到 Markdown，可撤销' : '使用右上角 Folio 图标打开可交互预览';
     });
+    if (taskMenuTarget && (!taskMenuTarget.isConnected || taskMenuTarget.disabled)) closeTaskMenu();
     // The labels just created are already initialized; do not scan the entire document again for our own mutations.
     observer.takeRecords();
   }
   let scheduled = false;
   const observer = new MutationObserver(mutations => {
-    if (scheduled || !mutations.some(mutation => mutation.addedNodes.length)) return;
+    if (scheduled || !mutations.some(mutation => mutation.type === 'characterData' || mutation.addedNodes.length || mutation.removedNodes.length)) return;
     scheduled = true;
     requestAnimationFrame(() => { scheduled = false; enhanceContent(); });
   });
   function start() {
     enhanceContent();
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    watchLocalDate();
     host?.postMessage({ type: 'ready' });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();
-  window.addEventListener('beforeunload', () => observer.disconnect(), { once: true });
+  window.addEventListener('beforeunload', () => { observer.disconnect(); clearTimeout(dateTimer); }, { once: true });
 })();

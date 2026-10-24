@@ -4,19 +4,22 @@ const vscode = require('vscode');
 const { randomBytes } = require('node:crypto');
 const { taskMarker } = require('./markdown');
 const { pickProjectFile } = require('./files');
+const { TemplateStore } = require('./templates');
 const viewType = 'folio.markdownPreview';
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 
 async function updateTask(document, message) {
+  const state = message.state ?? (typeof message.checked === 'boolean' ? message.checked ? 'done' : 'pending' : null);
+  const markers = { pending: ' ', progress: '/', done: 'x' };
   if (document.languageId !== 'markdown' || !Number.isInteger(message.line) || message.line < 0 || message.line >= document.lineCount) throw new Error('无法定位此任务，请刷新预览后重试。');
-  if (message.version !== document.version || typeof message.checked !== 'boolean') throw new Error('文档已更新，预览已刷新，请重新勾选。');
+  if (message.version !== document.version || !Object.hasOwn(markers, state)) throw new Error('文档已更新或任务状态无效，请重新选择。');
   const source = document.lineAt(message.line).text;
   const marker = taskMarker(source);
   if (source !== message.source || !marker || marker[1].length + 1 !== message.character) throw new Error('任务内容已变化，预览已刷新，请重新勾选。');
   if (vscode.workspace.fs.isWritableFileSystem(document.uri.scheme) === false) throw new Error('此文档为只读，无法修改待办。');
-  if ((marker[2].toLowerCase() === 'x') === message.checked) return;
+  if (marker[2].toLowerCase() === markers[state]) return;
   const edit = new vscode.WorkspaceEdit();
-  edit.replace(document.uri, new vscode.Range(message.line, message.character, message.line, message.character + 1), message.checked ? 'x' : ' ');
+  edit.replace(document.uri, new vscode.Range(message.line, message.character, message.line, message.character + 1), markers[state]);
   if (!await vscode.workspace.applyEdit(edit)) throw new Error('未能修改待办，请检查文档是否可写后重试。');
 }
 
@@ -41,6 +44,7 @@ class PreviewProvider {
     this.context = context;
     this.documents = new Map();
     this.flushers = new Map();
+    this.templates = new TemplateStore(context.globalState);
   }
 
   get activeDocument() {
@@ -120,6 +124,22 @@ class PreviewProvider {
     const listeners = [
       panel.webview.onDidReceiveMessage(message => {
         if (!message || typeof message !== 'object') return;
+        if (message.type === 'templates' && Number.isInteger(message.id)) {
+          void (async () => {
+            try {
+              let result;
+              if (message.action === 'list') result = this.templates.read();
+              else if (message.action === 'render') {
+                if (typeof message.content !== 'string' || message.content.length > 50000) throw new Error('模板内容过长，无法预览。');
+                result = { html: await vscode.commands.executeCommand('markdown.api.render', message.content) };
+              } else result = await this.templates.update(message);
+              if (!disposed) await panel.webview.postMessage({ type: 'templates-result', id: message.id, ok: true, ...result });
+            } catch (error) {
+              if (!disposed) await panel.webview.postMessage({ type: 'templates-result', id: message.id, ok: false,
+                error: error.message || '模板保存失败，请重试。当前输入已保留。' });
+            }
+          })();
+        }
         if (message.type === 'ready') {
           ready = true;
           if (bufferedContent && (bufferedContent.type === 'error' || bufferedContent.version === document.version)) void panel.webview.postMessage(bufferedContent);
@@ -220,6 +240,8 @@ class PreviewProvider {
       + '</head><body data-folio-interactive="true"><div class="folio-status" role="status" aria-live="polite" hidden></div><main class="markdown-body" dir="auto"></main>'
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/emoji.js'))}"></script>`
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/table.js'))}"></script>`
+      + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/blocks.js'))}"></script>`
+      + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/templates.js'))}"></script>`
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/editor.js'))}"></script>`
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/preview.js'))}"></script></body></html>`;
   }

@@ -1,8 +1,12 @@
 (() => {
   'use strict';
-  const escapeText = text => text.replace(/([\\`*_[\]<>~])/g, '\\$1').replace(/^(\s*)(#{1,6}|[-+]|\d+\.)\s/gm, '$1\\$2 ');
+  const escapeText = text => text.replace(/([\\`*_[\]<>~])/g, '\\$1').replace(/^(\s*)(#{1,6}|[-+]|\d+\.)(?=\s|$)/gm, '$1\\$2');
   const inline = node => {
-    if (node.nodeType === Node.TEXT_NODE) return escapeText(node.textContent.replace(/\u00a0/g, ' '));
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent.replace(/\u00a0/g, ' ');
+      // Markdown-it emits a formatting newline after <br>; the break itself already serializes that newline.
+      return escapeText(node.previousSibling?.nodeName === 'BR' ? text.replace(/^\r?\n/, '') : text);
+    }
     if (!(node instanceof Element)) return '';
     const inner = () => Array.from(node.childNodes, inline).join('');
     const tag = node.tagName.toLowerCase();
@@ -40,7 +44,7 @@
       return `${fence}${language}\n${code}\n${fence}\n\n`;
     }
     if (tag === 'ul' || tag === 'ol') {
-      let index = Number(node.getAttribute('start')) || 1;
+      let index = node.hasAttribute('start') ? Number(node.getAttribute('start')) : 1;
       const items = Array.from(node.children).filter(child => child.tagName === 'LI');
       const loose = items.some(item => Array.from(item.children).some(child => child.tagName === 'P'));
       return items.map(item => {
@@ -59,7 +63,7 @@
         flushText();
         let body = parts.map((part, i) => (i ? part.kind === 'list' && parts[i - 1].kind === 'inline' ? '\n' : '\n\n' : '') + part.text).join('');
         if (checkbox && parts[0]?.kind === 'list') body = '\n' + body;
-        const lines = ((checkbox ? `[${checkbox.checked ? 'x' : ' '}] ` : '') + body).split('\n');
+        const lines = ((checkbox ? `[${checkbox.dataset.folioTaskState === 'progress' ? '/' : checkbox.checked ? 'x' : ' '}] ` : '') + body).split('\n');
         return marker + lines.map((line, i) => i && line ? ' '.repeat(marker.length) + line : line).join('\n');
       }).join(loose ? '\n\n' : '\n') + '\n\n';
     }
@@ -87,6 +91,7 @@
     ['link', '链接', 'M10 13a4 4 0 0 0 6 0l4-4a4 4 0 0 0-6-6l-2 2M14 11a4 4 0 0 0-6 0l-4 4a4 4 0 0 0 6 6l2-2', 'link lianjie', '常用', 'blue'],
     ['file', '项目文件', 'M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6ZM14 3v6h6M8 13h8M8 17h5', 'file project workspace wenjian xiangmu 文件链接', '常用', 'teal'],
     ['emoji', 'Emoji 表情', 'M21 12a9 9 0 1 0-18 0 9 9 0 0 0 18 0ZM8 9h.01M16 9h.01M8 14c1.5 4 6.5 4 8 0', 'emoji emote biaoqing 表情 笑脸', '常用', 'yellow'],
+    ['template', '模板', 'M8 3h11a2 2 0 0 1 2 2v11M5 7h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2ZM7 12h6M7 16h4', 'template muban riji 日记', '常用', 'accent'],
     ['task', '任务', 'M19 11v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h10M8 11l4 4 9-11', 'todo task checklist renwu', '常用', 'green'],
     ['image', '图片', 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM3 17l6-6 5 5 3-3 4 4M17 7a1 1 0 1 0-2 0 1 1 0 0 0 2 0', 'image photo tupian', '常用', 'yellow'],
     ['table', '表格', 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM3 9h18M3 15h18M10 9v12', 'table biaoge', '常用', 'blue']
@@ -97,10 +102,14 @@
     const pending = new Map();
     const waiters = [];
     const listEdits = [];
+    const renderWaiters = new Set();
     let source = '', writable = true, active = null, deferred = null, sequence = 0, composing = false, conflicted = false, menuState = null;
+    let renderedSource = null;
     let historyVersion = 0, historyCaret = null;
     let fileRequest = null;
     let emojiRequest = null;
+    let templateRequest = null;
+    const blocks = window.FolioBlocks({ main, read: () => source, canMove: () => writable && !conflicted && !composing, prepare: prepareMove, commit: moveContent });
     const tables = window.FolioTables({
       canEdit: () => writable && !conflicted && !composing,
       onActivate: table => table.isConnected && open(table.closest('.folio-block')),
@@ -111,6 +120,7 @@
       }
     });
     const emojiPicker = window.FolioEmojiPicker({ onSelect: insertEmoji, onClose: closeEmoji });
+    const templates = window.FolioTemplates({ host, insert: insertTemplate, restore: restoreTemplateCaret });
     const menu = document.createElement('div');
     menu.className = 'folio-insert-menu'; menu.hidden = true; menu.setAttribute('role', 'listbox'); menu.id = 'folio-insert-menu'; menu.setAttribute('aria-label', '插入模块');
     const footer = document.createElement('div');
@@ -139,6 +149,7 @@
     function attach(message) {
       closeEmoji(false);
       source = message.source || ''; writable = message.writable !== false;
+      renderedSource = source;
       documentEnd.hidden = !writable || conflicted;
       const lines = offsets(source);
       for (const block of main.querySelectorAll('.folio-block')) {
@@ -151,6 +162,23 @@
       if (writable && !source.trim() && !historyCaret?.emptyBlock) insertEmptyBlock();
       if (historyCaret) { restoreCaret(historyCaret); historyCaret = null; }
       if (state().draft?.markdown && !pending.size && !active) { recovery.hidden = false; showError('有一份未同步的草稿，可复制后继续编辑，或放弃草稿并刷新。'); }
+      blocks.refresh(); for (const resolve of renderWaiters) resolve(true); renderWaiters.clear();
+    }
+    async function prepareMove() {
+      const wasEditing = !!active;
+      if (!writable || conflicted || composing || !await flush()) return false;
+      finish();
+      if (!wasEditing && renderedSource === source) return true;
+      return new Promise(resolve => {
+        const timer = setTimeout(() => { renderWaiters.delete(done); resolve(false); }, 5000);
+        const done = ok => { clearTimeout(timer); resolve(ok); };
+        renderWaiters.add(done); host.postMessage({ type: 'ready' });
+      });
+    }
+    function moveContent(base, text) {
+      if (!writable || conflicted || composing || active || pending.size || base !== source || text === base) return false;
+      const message = { type: 'edit', id: ++sequence, historyVersion, start: 0, end: base.length, base, text };
+      source = text; pending.set(message.id, message); rememberListEdit(base, null, null); remember(); host.postMessage(message); feedback('同步中…'); return true;
     }
     function captureCaret() {
       if (!active) return null;
@@ -302,11 +330,11 @@
       if (active.raw) return active.input.value.replace(/\r?\n/g, eol());
       return active.prefix + Array.from(active.content.childNodes, serialize).join('').trimEnd().replace(/\r?\n/g, eol()) + active.tail;
     }
-    function sync(force = false) {
+    function sync(force = false, replacement) {
       if (!active || conflicted || composing) return;
       if (!active.raw && !force && active.lastHTML === active.content.innerHTML) return;
       active.lastHTML = active.content.innerHTML;
-      const text = value(), before = source.slice(active.start, active.end);
+      const text = replacement ?? value(), before = source.slice(active.start, active.end);
       if (text === before) return;
       const message = { type: 'edit', id: ++sequence, historyVersion, start: active.start, end: active.end, base: source, text };
       const delta = text.length - (active.end - active.start);
@@ -317,7 +345,9 @@
         }
       }
       source = source.slice(0, active.start) + text + source.slice(active.end); active.end += delta; active.changed = true;
-      pending.set(message.id, message); remember(); host.postMessage(message); feedback('同步中…'); enhance();
+      pending.set(message.id, message);
+      if (replacement !== undefined) host.setState({ ...state(), draft: { markdown: source } }); else remember();
+      host.postMessage(message); feedback('同步中…'); enhance();
     }
     function finish(refresh = true) {
       if (!active || composing) return;
@@ -343,6 +373,7 @@
     }
     function receive(message) {
       if (!message || typeof message !== 'object') return false;
+      if (templates.receive(message)) return true;
       if (message.type === 'edit-result') {
         if (!pending.has(message.id)) return true;
         pending.delete(message.id);
@@ -403,6 +434,45 @@
       const block = insertEmptyBlock();
       if (block) block.dataset.documentEnd = 'true';
     }
+    function paste(event) {
+      if (!active || active.raw || !active.content.contains(event.target)) return;
+      event.preventDefault();
+      if (!writable || conflicted || composing || !event.clipboardData) return;
+      const text = event.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n');
+      const selection = window.getSelection();
+      if (!text || !selection.rangeCount) return;
+      const range = selection.getRangeAt(0).cloneRange();
+      if (!active.content.contains(range.startContainer) || !active.content.contains(range.endContainer)) return;
+      const element = node => node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+      const cell = element(range.startContainer)?.closest('td, th');
+      if (cell && !cell.contains(range.endContainer)) return;
+      if (range.cloneContents().querySelector('input, table')) return;
+      sync(); closeMenu();
+      const before = source, beforeCaret = captureCaret();
+      const paragraph = element(range.startContainer)?.closest('p');
+      const markdown = /(?:^|\n) {0,3}(?:#{1,6}\s|[-+*]\s|\d+[.)]\s|>\s?|`{3}|~{3}|(?:-{3,}|\*{3,}|_{3,})\s*$)/m.test(text)
+        || /\*\*[^\n]+\*\*|\[[^\]\n]+\]\([^\n]+\)|(?:^|\n)\s*\|?.*\|.*\n\s*\|?\s*:?-{3,}/m.test(text);
+      if (paragraph?.parentElement === active.content && !paragraph.textContent.trim() && !paragraph.querySelector(':not(br)') && markdown) {
+        const children = Array.from(active.content.childNodes), chunk = text.trimEnd() + '\n\n';
+        const preceding = active.prefix + children.slice(0, children.indexOf(paragraph)).map(serialize).join('');
+        const beforePosition = Math.min(active.start + preceding.replace(/\r?\n/g, eol()).length, active.end);
+        const replacement = active.prefix + children.map(node => node === paragraph ? chunk : serialize(node)).join('').trimEnd().replace(/\r?\n/g, eol()) + active.tail;
+        const end = active.start + (preceding + chunk).replace(/\r?\n/g, eol()).length;
+        sync(true, replacement);
+        const position = Math.min(end, active.end), afterCaret = { emptyBlock: true, start: position, end: position };
+        rememberListEdit(before, { emptyBlock: true, start: beforePosition, end: beforePosition }, afterCaret); historyCaret = afterCaret; finish(); return;
+      }
+      // Cursor dispatches paste through execCommand; nesting another execCommand here is ignored by Chromium.
+      const fragment = document.createDocumentFragment();
+      for (const [index, line] of text.split('\n').entries()) {
+        if (index) fragment.append(document.createElement('br'));
+        fragment.append(document.createTextNode(line));
+      }
+      const last = fragment.lastChild;
+      range.deleteContents(); range.insertNode(fragment); range.setStartAfter(last); range.collapse(true);
+      selection.removeAllRanges(); selection.addRange(range);
+      sync(true); rememberListEdit(before, beforeCaret, captureCaret());
+    }
     function lineAtCaret() {
       const selection = window.getSelection(); if (!active || active.raw || !selection.rangeCount) return null;
       const node = selection.anchorNode?.nodeType === Node.ELEMENT_NODE ? selection.anchorNode : selection.anchorNode?.parentElement;
@@ -412,11 +482,31 @@
       const range = selection.getRangeAt(0).cloneRange(); range.selectNodeContents(line); range.setEnd(selection.anchorNode, selection.anchorOffset);
       return { line, before: range.toString(), range: selection.getRangeAt(0).cloneRange() };
     }
+    function autoList(event) {
+      if (event.inputType !== 'insertText' || event.data !== ' ' || !event.cancelable || event.isComposing || composing
+        || !active || active.raw || !writable || conflicted || !active.content.contains(event.target)) return false;
+      const selection = window.getSelection(), location = lineAtCaret();
+      if (!selection.isCollapsed || !location || location.line.tagName !== 'P' || location.line.closest('li, pre, th, td')) return false;
+      const match = /^(?:-|(\d{1,9})\.?)$/.exec(location.before);
+      if (!match) return false;
+      const prefix = location.range.cloneRange(); prefix.selectNodeContents(location.line); prefix.setEnd(location.range.startContainer, location.range.startOffset);
+      // Only a literal marker at the beginning of a paragraph is a shortcut, never inline code or a soft-wrapped line.
+      if (prefix.cloneContents().querySelector('*')) return false;
+      event.preventDefault(); sync(); closeMenu();
+      const before = source, beforeCaret = captureCaret();
+      const list = document.createElement(match[1] === undefined ? 'ul' : 'ol'), item = document.createElement('li');
+      if (match[1] !== undefined && Number(match[1]) !== 1) list.setAttribute('start', String(Number(match[1])));
+      const remainder = location.range.cloneRange(); remainder.selectNodeContents(location.line); remainder.setStart(location.range.startContainer, location.range.startOffset);
+      item.append(remainder.extractContents()); if (!item.textContent && !item.querySelector('img, br')) item.append(document.createElement('br'));
+      list.append(item); location.line.replaceWith(list); active.content.focus({ preventScroll: true });
+      const caret = document.createRange(); caret.selectNodeContents(item); caret.collapse(true); selection.removeAllRanges(); selection.addRange(caret);
+      sync(); rememberListEdit(before, beforeCaret, captureCaret()); return true;
+    }
     function paragraphAfterListItem(list, count) {
       const items = Array.from(list.children).filter(child => child.tagName === 'LI');
       if (count < items.length) {
         const tail = list.cloneNode(false);
-        if (list.tagName === 'OL') tail.setAttribute('start', String((Number(list.getAttribute('start')) || 1) + count));
+        if (list.tagName === 'OL') tail.setAttribute('start', String((list.hasAttribute('start') ? Number(list.getAttribute('start')) : 1) + count));
         tail.append(...items.slice(count)); list.after(tail);
       }
       const paragraph = document.createElement('p'); paragraph.append(document.createElement('br')); list.after(paragraph);
@@ -562,7 +652,9 @@
       if (!location || (!match && !force)) { closeMenu(); return; }
       const query = match ? match[1].toLowerCase() : '';
       const inlineMode = /^(TH|TD)$/.test(location.line.tagName) || force && !match && Boolean(location.line.textContent.trim());
-      const items = modules.filter(item => (!inlineMode || ['link', 'file', 'emoji'].includes(item[0])) && `${item[0]} ${item[1]} ${item[3]}`.toLowerCase().includes(query));
+      const standalone = location.line.parentElement === active.content && /^(P|H[1-6])$/.test(location.line.tagName);
+      const items = modules.filter(item => (!inlineMode || ['link', 'file', 'emoji'].includes(item[0])) && (item[0] !== 'template' || standalone)
+        && `${item[0]} ${item[1]} ${item[3]}`.toLowerCase().includes(query));
       const selected = menuState?.query === query ? Math.min(menuState.selected, items.length - 1) : 0;
       const opening = menu.hidden;
       menuState = { ...location, query, trigger: Boolean(match), inlineMode, items, selected: Math.max(0, selected) };
@@ -619,6 +711,10 @@
     }
     function selectModule(id) {
       if (!menuState) return;
+      if (id === 'template') {
+        sync(); const insertion = captureInsertion(menuState, true); if (!insertion) return;
+        templateRequest = { ...insertion, beforeCaret: captureCaret() }; closeMenu(); templates.open(); return;
+      }
       if (id === 'file') { requestProjectFile(); return; }
       if (id === 'emoji') {
         const insertion = captureInsertion(menuState, true);
@@ -686,6 +782,30 @@
     }
     function validInsertion(request) {
       return !conflicted && writable && active === request.editor && request.target.isConnected && source === request.source && request.target.innerHTML === request.html;
+    }
+    function restoreTemplateCaret() {
+      const request = templateRequest; templateRequest = null;
+      if (!request || !validInsertion(request)) return;
+      active.input.focus({ preventScroll: true }); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(request.caret);
+    }
+    function insertTemplate(markdown) {
+      const request = templateRequest;
+      if (!request || !validInsertion(request) || request.target.parentElement !== active.content) return '插入位置已变化，请关闭模板库，在新的位置重新打开。模板已保留。';
+      const children = Array.from(active.content.childNodes), index = children.indexOf(request.target);
+      const beforeRange = document.createRange(); beforeRange.selectNodeContents(request.target); beforeRange.setEnd(request.range.startContainer, request.range.startOffset);
+      const afterRange = document.createRange(); afterRange.selectNodeContents(request.target); afterRange.setStart(request.range.endContainer, request.range.endOffset);
+      const fragmentMarkdown = fragment => {
+        if (!fragment.textContent.trim() && !fragment.querySelector('img')) return '';
+        const paragraph = document.createElement('p'); paragraph.append(fragment); return serialize(paragraph);
+      };
+      const preceding = active.prefix + children.slice(0, index).map(serialize).join('') + fragmentMarkdown(beforeRange.cloneContents());
+      const chunk = markdown.replace(/\r\n?/g, '\n').trimEnd() + '\n\n';
+      const following = fragmentMarkdown(afterRange.cloneContents()) + children.slice(index + 1).map(serialize).join('');
+      const replacement = (preceding + chunk + following).replace(/\r?\n/g, eol());
+      const position = active.start + (preceding + chunk).replace(/\r?\n/g, eol()).length;
+      const before = source, afterCaret = { emptyBlock: true, start: position, end: position };
+      sync(true, replacement); rememberListEdit(before, request.beforeCaret, afterCaret);
+      templateRequest = null; historyCaret = afterCaret; finish(); return '';
     }
     function closeEmoji(restore = false) {
       const request = emojiRequest; emojiRequest = null; emojiPicker.close();
@@ -759,9 +879,11 @@
     menu.addEventListener('mousedown', event => event.preventDefault());
     menu.addEventListener('click', event => { const button = event.target.closest('[data-module]'); if (button) selectModule(button.dataset.module); });
     document.addEventListener('pointerdown', event => {
+      if (templates.element.open) return;
       if (emojiPicker.element.contains(event.target)) return;
       if (emojiRequest) closeEmoji(false);
-      if (!(event.target instanceof Element) || menu.contains(event.target) || recovery.contains(event.target) || event.target.closest('.folio-resource-form, .folio-table-controls, .folio-table-menu')) return;
+      if (!(event.target instanceof Element) || menu.contains(event.target) || recovery.contains(event.target)
+        || event.target.closest('.folio-resource-form, .folio-table-controls, .folio-table-menu, .folio-task-menu')) return;
       if (event.altKey) { finish(); return; }
       if (event.target.closest('input, a, button, summary, textarea')) return;
       if (!documentEnd.hidden && event.button === 0 && !event.shiftKey && !event.metaKey && !event.ctrlKey
@@ -789,16 +911,14 @@
     main.addEventListener('input', event => { if (active?.input.contains(event.target) || active?.input === event.target) { resize(); if (!composing && !event.isComposing) { sync(); updateMenu(); } } });
     main.addEventListener('compositionstart', () => { composing = true; closeMenu(); });
     main.addEventListener('compositionend', () => { composing = false; sync(); updateMenu(); });
-    main.addEventListener('beforeinput', tables.beforeInput);
-    main.addEventListener('paste', event => {
-      if (!active || active.raw || !active.content.contains(event.target)) return;
-      event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain')); sync();
-    });
+    main.addEventListener('beforeinput', event => { if (!autoList(event)) tables.beforeInput(event); });
+    main.addEventListener('paste', paste);
     document.addEventListener('keydown', event => {
+      if (templates.element.open) return;
       if (event.isComposing || composing) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's' && active) { event.preventDefault(); event.stopPropagation(); void flush().then(ok => { if (ok) host.postMessage({ type: 'save' }); }); return; }
       if (emojiPicker.element.contains(event.target)) return;
-      if (event.target.closest?.('.folio-resource-form')) return;
+      if (event.target.closest?.('.folio-resource-form, .folio-task-menu')) return;
       if (event.target === documentEnd && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); editDocumentEnd(); return; }
       if (event.key === 'Enter' && event.target.classList?.contains('folio-block-content') && active?.content !== event.target) { event.preventDefault(); open(event.target.closest('.folio-block'), true); return; }
       if (!active) return;
@@ -834,7 +954,7 @@
     return {
       attach, receive, flush,
       owns: node => Boolean(active?.content.contains(node)),
-      allowTask: node => !conflicted && (active?.content.contains(node) || (!active && !pending.size)),
+      allowTask: node => writable && !composing && !conflicted && (active?.content.contains(node) || (!active && !pending.size)),
       handleTask: node => { if (active?.content.contains(node)) { sync(true); return true; } return false; },
       get editing() { return Boolean(active); }
     };

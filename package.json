@@ -2,7 +2,7 @@
   "name": "folio-markdown",
   "displayName": "Folio · Markdown Preview",
   "description": "暮色多彩 Markdown 编辑预览，支持就地编辑、斜杠模块菜单与交互式 Todo。",
-  "version": "0.7.2",
+  "version": "0.11.0",
   "publisher": "muyang",
   "author": {
     "name": "muyang"
@@ -44,8 +44,8 @@
     "virtualWorkspaces": true
   },
   "scripts": {
-    "check": "node --check src/extension.js && node --check src/markdown.js && node --check media/preview.js && node --check src/files.js && node --check src/preview.js && node --check media/editor.js && node --check media/emoji.js && node --check media/table.js",
-    "package": "vsce package --allow-missing-repository --out folio-markdown-0.7.2.vsix"
+    "check": "node --check src/extension.js && node --check src/markdown.js && node --check media/preview.js && node --check src/files.js && node --check src/preview.js && node --check media/editor.js && node --check media/emoji.js && node --check media/table.js && node --check media/blocks.js && node --check src/templates.js && node --check media/templates.js",
+    "package": "vsce package --allow-missing-repository --out folio-markdown-0.11.0.vsix"
   },
   "contributes": {
     "commands": [

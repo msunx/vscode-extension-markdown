@@ -3,6 +3,20 @@
   const originals = new WeakMap(), cells = new WeakMap();
   const tableOf = cell => cell?.closest('table[data-folio-table]');
   const emptyCell = tag => { const cell = document.createElement(tag); cell.append(document.createElement('br')); return cell; };
+  const widthsOf = table => table.dataset.folioTableWidths?.split(',').map(Number) || [];
+  function paintWidths(table, widths) {
+    let group = table.querySelector(':scope > colgroup');
+    table.classList.toggle('has-column-widths', Boolean(widths.length));
+    if (!widths.length) { group?.remove(); table.style.removeProperty('width'); return; }
+    if (!group) { group = document.createElement('colgroup'); table.prepend(group); }
+    group.replaceChildren(...widths.map(width => { const col = document.createElement('col'); col.style.width = `${width}px`; return col; }));
+    table.style.width = `${widths.reduce((sum, width) => sum + width, 0)}px`;
+  }
+  function setWidths(table, widths) {
+    if (widths.length) table.dataset.folioTableWidths = widths.join(',');
+    else delete table.dataset.folioTableWidths;
+    paintWidths(table, widths);
+  }
   function remember(table) {
     if (originals.has(table)) return;
     const rows = Array.from(table.rows, row => Array.from(row.cells));
@@ -10,7 +24,8 @@
       if (!cell.hasChildNodes()) cell.append(document.createElement('br'));
       cells.set(cell, { html: cell.innerHTML, source: cell.dataset.folioCellSource });
     }
-    originals.set(table, { rows, source: table.dataset.folioTableSource });
+    originals.set(table, { rows, source: table.dataset.folioTableSource, widths: table.dataset.folioTableWidths || '', prefix: table.dataset.folioTablePrefix || '' });
+    paintWidths(table, widthsOf(table));
   }
   function cellSource(cell, inline) {
     const original = cells.get(cell);
@@ -26,10 +41,12 @@
     const values = rows.map(row => row.map(cell => cellSource(cell, inline)));
     const unchanged = original.source !== undefined && rows.length === original.rows.length && rows.every((row, r) => row.length === original.rows[r].length
       && row.every((cell, c) => cell === original.rows[r][c] && values[r][c] === cells.get(cell)?.source));
-    if (unchanged) return original.source + '\n\n';
+    const widths = table.dataset.folioTableWidths || '';
+    const prefix = widths === original.widths ? original.prefix : widths ? `<!-- folio:table-widths ${widths} -->\n` : '';
+    if (unchanged) return prefix + original.source + '\n\n';
     const line = values => '| ' + values.join(' | ') + ' |';
     const alignment = rows[0].map(cell => ({ left: ':---', center: ':---:', right: '---:' })[cell.style.textAlign] || '---');
-    return [line(values[0]), line(alignment), ...values.slice(1).map(line)].join('\n') + '\n\n';
+    return prefix + [line(values[0]), line(alignment), ...values.slice(1).map(line)].join('\n') + '\n\n';
   }
   function create(text = '') {
     const wrapper = document.createElement('div'); wrapper.className = 'folio-table'; wrapper.tabIndex = 0; wrapper.setAttribute('role', 'region'); wrapper.setAttribute('aria-label', '表格，可横向滚动');
@@ -41,7 +58,7 @@
   }
   window.FolioTables = function ({ canEdit, onActivate, onChange, onSelect }) {
     const controls = new WeakMap(), live = new Set();
-    let selected = null, axisSelection = null, scheduled = false;
+    let selected = null, axisSelection = null, scheduled = false, drag = null;
     const menu = document.createElement('div'); menu.className = 'folio-table-menu'; menu.hidden = true; menu.setAttribute('role', 'group'); menu.setAttribute('aria-label', '所选行列操作');
     const remove = document.createElement('button'); remove.type = 'button'; remove.dataset.tableAction = 'delete'; menu.append(remove); document.body.append(menu);
     function clearAxis() {
@@ -77,6 +94,15 @@
       const width = viewport.width, height = table.getBoundingClientRect().bottom - base.top;
       layer.style.width = `${width}px`; layer.style.height = `${height}px`;
       for (const button of layer.querySelectorAll('button')) {
+        if (button.hasAttribute('data-table-resize')) {
+          const index = Number(button.dataset.index), position = point(record, 'column', index + 1);
+          button.hidden = button !== drag?.button && (position < 5 || position > width + 1);
+          button.style.left = `${button === drag?.button ? Math.max(4, Math.min(position, width - 4)) : position}px`;
+          button.style.top = `${table.getBoundingClientRect().top - base.top}px`;
+          button.style.height = `${table.getBoundingClientRect().height}px`;
+          button.setAttribute('aria-valuenow', String(Math.round(table.rows[0].cells[index].getBoundingClientRect().width)));
+          continue;
+        }
         const axis = button.dataset.tableSelect || button.dataset.tableInsert, index = Number(button.dataset.index), position = point(record, axis, index);
         if (button.dataset.tableSelect) {
           const end = point(record, axis, index + 1), limit = axis === 'column' ? width : height;
@@ -120,10 +146,49 @@
           button.title = label; button.setAttribute('aria-label', label); button.innerHTML = '<span aria-hidden="true">+</span>'; layer.append(button);
         }
       }
+      for (let index = 0; index < table.rows[0].cells.length; index++) {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'folio-table-resize';
+        button.dataset.tableResize = ''; button.dataset.index = index; button.setAttribute('role', 'separator'); button.setAttribute('aria-orientation', 'vertical');
+        button.setAttribute('aria-label', `调整第 ${index + 1} 列宽度`); button.setAttribute('aria-valuemin', '90'); button.setAttribute('aria-valuemax', '3000');
+        button.title = '左右拖动调整列宽'; layer.append(button);
+      }
       layout(record);
     }
+    function resizeWidths(widths, index, delta) {
+      const next = [...widths], adjacent = index < widths.length - 1;
+      const minimum = adjacent ? Math.max(90 - widths[index], widths[index + 1] - 3000) : 90 - widths[index];
+      const maximum = adjacent ? Math.min(3000 - widths[index], widths[index + 1] - 90) : 3000 - widths[index];
+      const change = Math.round(Math.max(minimum, Math.min(maximum, delta)));
+      next[index] += change; if (adjacent) next[index + 1] -= change; return next;
+    }
+    const measuredWidths = table => Array.from(table.rows[0].cells, cell => Math.max(90, Math.min(3000, Math.round(cell.getBoundingClientRect().width))));
+    function endResize(commit) {
+      if (!drag) return;
+      const current = drag; drag = null;
+      const { record, button, pointerId, start, widths } = current;
+      if (button.hasPointerCapture(pointerId)) button.releasePointerCapture(pointerId);
+      button.classList.remove('is-resizing'); record.shell.classList.remove('is-resizing'); document.documentElement.classList.remove('folio-resizing-table');
+      // Preview styles never alter the persisted widths. Commit only inside onChange so undo captures the original source.
+      paintWidths(record.table, widthsOf(record.table));
+      if (commit && canEdit() && record.table.isConnected && widths.some((width, index) => width !== start[index])) {
+        onChange(() => setWidths(record.table, widths));
+      }
+      layout(record); onSelect();
+    }
+    function startResize(event, record, button) {
+      if (event.button !== 0 || !event.isPrimary || !canEdit() || !onActivate(record.table)) return;
+      endResize(false); clearAxis(); hideGuide(record);
+      const index = Number(button.dataset.index), start = measuredWidths(record.table);
+      select(record.table.rows[0].cells[index], true, false);
+      drag = { record, button, pointerId: event.pointerId, x: event.clientX, index, start, widths: start };
+      button.setPointerCapture(event.pointerId); button.classList.add('is-resizing'); record.shell.classList.add('is-resizing');
+      document.documentElement.classList.add('folio-resizing-table');
+    }
     function prepare(content, writable) {
-      for (const record of live) if (!record.table.isConnected) { record.observer.disconnect(); live.delete(record); if (axisSelection?.table === record.table) clearAxis(); }
+      for (const record of live) if (!record.table.isConnected) {
+        if (drag?.record === record) endResize(false);
+        record.observer.disconnect(); live.delete(record); if (axisSelection?.table === record.table) clearAxis();
+      }
       for (const table of content.querySelectorAll('table[data-folio-table]')) {
         remember(table); table.contentEditable = 'false';
         if (!writable) continue;
@@ -136,10 +201,21 @@
         const record = { table, wrapper, shell, layer, guide, observer: new ResizeObserver(scheduleLayout) };
         controls.set(table, record); live.add(record); rebuild(record); record.observer.observe(table); record.observer.observe(wrapper);
         wrapper.addEventListener('scroll', scheduleLayout, { passive: true });
-        layer.addEventListener('pointerdown', event => event.preventDefault());
+        layer.addEventListener('pointerdown', event => {
+          event.preventDefault(); const button = event.target.closest('[data-table-resize]'); if (button) startResize(event, record, button);
+        });
+        layer.addEventListener('pointermove', event => {
+          if (drag?.record !== record || drag.pointerId !== event.pointerId) return;
+          if (!canEdit()) { endResize(false); return; }
+          event.preventDefault(); drag.widths = resizeWidths(drag.start, drag.index, event.clientX - drag.x);
+          paintWidths(table, drag.widths); layout(record);
+        });
+        layer.addEventListener('pointerup', event => { if (drag?.pointerId === event.pointerId) endResize(true); });
+        layer.addEventListener('pointercancel', () => endResize(false)); layer.addEventListener('lostpointercapture', () => endResize(false));
+        layer.addEventListener('keydown', event => { if (event.target.matches('[data-table-resize]') && !event.defaultPrevented) keydown(event); });
         layer.addEventListener('click', event => {
           const button = event.target.closest('button');
-          if (!button || !canEdit() || !onActivate(table)) return;
+          if (!button || button.hasAttribute('data-table-resize') || !canEdit() || !onActivate(table)) return;
           const index = Number(button.dataset.index);
           if (button.dataset.tableSelect) selectAxis(table, button.dataset.tableSelect, index, button);
           else onChange(() => insert(table, button.dataset.tableInsert, index));
@@ -160,18 +236,20 @@
       }
     }
     function deactivate(content) {
+      if (drag && content.contains(drag.record.table)) endResize(false);
       clearAxis();
       for (const cell of content.querySelectorAll('table[data-folio-table] :is(th, td)')) { cell.contentEditable = 'false'; cell.classList.remove('is-selected-cell'); }
       selected = null;
     }
-    function select(cell, focus = false) {
+    function select(cell, focus = false, scroll = true) {
       if (!tableOf(cell) || !canEdit()) return;
       clearAxis(); selected?.classList.remove('is-selected-cell'); selected = cell; cell.classList.add('is-selected-cell');
       if (focus) {
         cell.focus({ preventScroll: true });
         const range = document.createRange(); range.selectNodeContents(cell); range.collapse(false);
         if (cell.lastChild?.nodeName === 'BR') { range.setStartBefore(cell.lastChild); range.collapse(true); }
-        const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); cell.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+        if (scroll) cell.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       }
       onSelect();
     }
@@ -195,7 +273,9 @@
       let target;
       if (axis === 'row') target = addRow(table, index).cells[0];
       else {
+        const widths = widthsOf(table);
         for (const row of table.rows) { const cell = emptyCell(row.rowIndex === 0 ? 'th' : 'td'); cell.contentEditable = 'true'; row.insertBefore(cell, row.cells[index] || null); }
+        if (widths.length) { widths.splice(index, 0, 160); setWidths(table, widths); }
         target = table.rows[Math.min(selected?.parentElement.rowIndex || 0, table.rows.length - 1)].cells[index];
       }
       clearAxis(); const record = controls.get(table); hideGuide(record); activate(table.closest('.folio-block-content')); select(target, true);
@@ -208,7 +288,12 @@
         clearAxis();
         let target;
         if (axis === 'row') { table.deleteRow(index); target = table.rows[Math.min(index, table.rows.length - 1)].cells[0]; }
-        else { for (const row of table.rows) row.deleteCell(index); target = table.rows[0].cells[Math.min(index, table.rows[0].cells.length - 1)]; }
+        else {
+          const widths = widthsOf(table);
+          for (const row of table.rows) row.deleteCell(index);
+          if (widths.length) { widths.splice(index, 1); setWidths(table, widths); }
+          target = table.rows[0].cells[Math.min(index, table.rows[0].cells.length - 1)];
+        }
         activate(table.closest('.folio-block-content')); select(target, true);
       });
     }
@@ -222,7 +307,16 @@
     }
     function keydown(event) {
       if (event.target.closest?.('.folio-table-controls, .folio-table-menu')) {
-        if (event.key === 'Escape') { clearAxis(); if (selected?.isConnected) select(selected, true); }
+        const handle = event.target.closest('[data-table-resize]');
+        if (handle && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+          const table = handle.closest('.folio-table-shell').querySelector('table');
+          if (canEdit() && onActivate(table)) {
+            const index = Number(handle.dataset.index), widths = measuredWidths(table);
+            select(table.rows[0].cells[index], true, false); handle.focus({ preventScroll: true });
+            onChange(() => setWidths(table, resizeWidths(widths, index, (event.key === 'ArrowLeft' ? -1 : 1) * (event.shiftKey ? 1 : 10))));
+            layout(controls.get(table)); onSelect();
+          }
+        } else if (event.key === 'Escape') { clearAxis(); if (selected?.isConnected) select(selected, true); }
         else if (axisSelection && ['Backspace', 'Delete'].includes(event.key)) deleteAxis();
         else return false;
         event.preventDefault(); event.stopPropagation(); return true;
@@ -251,6 +345,14 @@
       if (event.inputType === 'insertParagraph') { event.preventDefault(); onChange(() => insert(tableOf(cell), 'row', cell.parentElement.rowIndex + 1)); }
     }
     window.addEventListener('resize', scheduleLayout); window.addEventListener('scroll', positionMenu, { passive: true });
+    document.addEventListener('keydown', event => {
+      if (!drag) return;
+      if (event.key === 'Escape') { endResize(false); event.preventDefault(); event.stopImmediatePropagation(); }
+      else if ((event.metaKey || event.ctrlKey) && ['s', 'z'].includes(event.key.toLowerCase())) endResize(false);
+      else { event.preventDefault(); event.stopImmediatePropagation(); }
+    }, true);
+    window.addEventListener('blur', () => endResize(false));
+    document.addEventListener('visibilitychange', () => { if (document.hidden) endResize(false); });
     window.addEventListener('beforeunload', () => { for (const record of live) record.observer.disconnect(); });
     return { prepare, activate, deactivate, select, keydown, beforeInput, atSelection };
   };

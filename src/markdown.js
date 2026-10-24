@@ -36,9 +36,14 @@ function addAlerts(md) {
 
 function addTasks(md) {
   md.core.ruler.before('github-task-lists', 'folio_empty_tasks', state => {
+    const lines = state.src.split('\n');
     for (let i = 2; i < state.tokens.length; i++) {
       const token = state.tokens[i];
       if (token.type !== 'inline' || state.tokens[i - 1].type !== 'paragraph_open' || state.tokens[i - 2].type !== 'list_item_open') continue;
+      if (taskMarker(lines[token.map?.[0]] || '')?.[2] === '/' && token.children?.[0]?.type === 'text' && /^\[\/\](?=\s|$)/.test(token.content)) {
+        // Let the existing task-list parser build the list; the source marker retains the third state.
+        token.content = '[ ]' + token.content.slice(3); token.children[0].content = '[ ]' + token.children[0].content.slice(3);
+      }
       if (!/^\[[ xX]\]$/.test(token.content) || token.children?.length !== 1 || token.children[0].type !== 'text') continue;
       // Markdown-it trims the trailing space of an empty task; restore it only for the task renderer.
       token.content += ' '; token.children[0].content += ' ';
@@ -54,28 +59,41 @@ function addTasks(md) {
       const match = typeof source === 'string' && taskMarker(source);
       if (!match) continue;
       checkbox.type = 'folio_task_checkbox';
-      checkbox.meta = { line, character: match[1].length + 1, source, checked: match[2].toLowerCase() === 'x' };
+      checkbox.meta = { line, character: match[1].length + 1, source, state: match[2] === '/' ? 'progress' : match[2].toLowerCase() === 'x' ? 'done' : 'pending' };
     }
   });
   md.renderer.rules.folio_task_checkbox = (tokens, index) => {
     const task = tokens[index].meta;
     const attributes = `data-folio-task-line="${task.line}" data-folio-task-character="${task.character}" data-folio-task-source="${md.utils.escapeHtml(task.source)}"`;
-    return `<input class="task-list-item-checkbox" type="checkbox" disabled ${task.checked ? 'checked' : ''} ${attributes}>`;
+    return `<input class="task-list-item-checkbox" type="checkbox" disabled ${task.state === 'done' ? 'checked' : ''} data-folio-task-state="${task.state}" ${attributes}>`;
   };
 }
 
 function taskMarker(line) {
-  return /^((?:[ \t]*(?:>[ \t]?|(?:[-+*]|\d+[.)])[ \t]+))+)\[([ xX])\](?=[ \t]|$)/.exec(line);
+  return /^((?:[ \t]*(?:>[ \t]?|(?:[-+*]|\d+[.)])[ \t]+))+)\[([ xX/])\](?=[ \t]|$)/.exec(line);
 }
 
 function addTableSources(md) {
   md.core.ruler.push('folio_table_sources', state => {
     const lines = state.src.split('\n');
+    const metadata = new Set();
     let table = false, cells = [], column = 0;
-    for (const token of state.tokens) {
+    for (let index = 0; index < state.tokens.length; index++) {
+      const token = state.tokens[index];
       if (token.type === 'table_open' && token.level === 0) {
         table = true; token.attrSet('data-folio-table', 'true');
         token.attrSet('data-folio-table-source', lines.slice(...token.map).join('\n').trimEnd());
+        const previous = state.tokens[index - 1];
+        const match = previous?.type === 'html_block' && /^<!-- folio:table-widths ([\d,]+) -->\s*$/.exec(previous.content);
+        if (match && previous.level === 0 && lines.slice(previous.map[1], token.map[0]).every(line => !line.trim())) {
+          const widths = match[1].split(',').map(Number), headerEnd = state.tokens.findIndex((item, i) => i > index && item.type === 'thead_close');
+          const count = state.tokens.slice(index, headerEnd).filter(item => item.type === 'th_open').length;
+          if (widths.length === count && widths.every(width => Number.isInteger(width) && width >= 90 && width <= 3000)) {
+            token.attrSet('data-folio-table-widths', widths.join(','));
+            token.attrSet('data-folio-table-prefix', lines.slice(previous.map[0], token.map[0]).join('\n') + '\n');
+            token.map = [previous.map[0], token.map[1]]; metadata.add(previous);
+          }
+        }
       }
       if (token.type === 'table_close') table = false;
       if (!table) continue;
@@ -88,6 +106,7 @@ function addTableSources(md) {
       }
       if (token.type === 'th_open' || token.type === 'td_open') token.attrSet('data-folio-cell-source', (cells[column++] || '').trim());
     }
+    state.tokens = state.tokens.filter(token => !metadata.has(token));
   });
 }
 
@@ -95,6 +114,9 @@ function addEditableBlocks(md) {
   md.core.ruler.push('folio_editable_blocks', state => {
     const output = [];
     const lines = state.src.split('\n');
+    for (const token of state.tokens) if (token.type === 'list_item_open' && token.map && token.attrGet('class')?.split(' ').includes('task-list-item')) {
+      token.attrSet('data-folio-move-start-line', String(token.map[0])); token.attrSet('data-folio-move-end-line', String(token.map[1]));
+    }
     for (let i = 0; i < state.tokens.length; i++) {
       const token = state.tokens[i];
       if (!token.map || token.level !== 0 || token.nesting === -1 || token.type === 'inline') { output.push(token); continue; }
