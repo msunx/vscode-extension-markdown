@@ -58,12 +58,19 @@
   window.FolioBlocks = function ({ main, read, canMove, prepare, commit }) {
     const handle = document.createElement('button'), guide = document.createElement('div'), ghost = document.createElement('div'), status = document.createElement('div');
     handle.type = 'button'; handle.className = 'folio-drag-handle'; handle.hidden = true; handle.setAttribute('aria-label', '拖动内容块');
+    const menu = document.createElement('div'), remove = document.createElement('button'), divider = document.createElement('div'), choices = document.createElement('div');
+    menu.className = 'folio-block-menu'; menu.id = 'folio-block-menu'; menu.hidden = true; menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', '内容块操作');
+    remove.type = 'button'; remove.setAttribute('role', 'menuitem'); remove.className = 'is-destructive';
+    remove.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"/></svg><span>删除</span>';
+    divider.className = 'folio-block-menu-divider'; divider.setAttribute('role', 'separator');
+    choices.className = 'folio-convert-choices'; choices.setAttribute('role', 'group'); choices.setAttribute('aria-label', '转换格式');
+    menu.append(remove, divider, choices); handle.setAttribute('aria-haspopup', 'menu'); handle.setAttribute('aria-controls', menu.id); handle.setAttribute('aria-expanded', 'false');
     guide.className = 'folio-drop-guide'; guide.hidden = true; guide.setAttribute('aria-hidden', 'true');
     ghost.className = 'folio-drag-ghost'; ghost.hidden = true; ghost.setAttribute('aria-hidden', 'true');
     status.className = 'folio-drag-status'; status.setAttribute('role', 'status');
     main.tabIndex = -1;
-    document.body.append(handle, guide, ghost, status);
-    let hovered = null, drag = null, frame = 0, hoverFrame = 0, lastPointer = null;
+    document.body.append(handle, guide, ghost, status, menu);
+    let hovered = null, drag = null, menuTarget = null, frame = 0, hoverFrame = 0, lastPointer = null;
     function collect(fresh = false) {
       const source = read(), lines = lineOffsets(source), units = [];
       const add = (block, element, kind, start, end, range = null, depth = 0) => {
@@ -79,6 +86,7 @@
         units.push(unit);
       };
       for (const block of main.querySelectorAll(':scope > .folio-block')) {
+        if (block.classList.contains('folio-section-hidden')) continue;
         if (block.dataset.documentEnd === 'true' && !source.slice(Number(block.dataset.sourceStart), Number(block.dataset.sourceEnd)).trim()) continue;
         const content = block.querySelector('.folio-block-content');
         const elements = !fresh && block.classList.contains('is-editing') && block.dataset.editMode === 'rich' ? [...content.children] : [content?.firstElementChild];
@@ -96,7 +104,7 @@
             tasks(element, 0);
           } else if (tag === 'p' && block.dataset.editMode === 'rich') {
             const ranges = lineRanges(element);
-            const spansLines = [...element.querySelectorAll('a, strong, em, code, del, s, mark, sup, sub')].some(inline => inline.textContent.includes('\n'));
+            const spansLines = [...element.querySelectorAll('a, strong, em, code, del, s, mark, sup, sub, span, u, b, i, font')].some(inline => inline.textContent.includes('\n'));
             if (!spansLines && ranges.length === end - start && ranges.every(Boolean)) ranges.forEach((range, index) => add(block, element, 'p', start + index, start + index + 1, range));
             else add(block, element, 'p', start, end);
           } else {
@@ -109,6 +117,10 @@
         const input = !fresh && block.querySelector('.folio-source-input');
         if (input && units.at(-1)?.block === block) {
           const unit = units.at(-1); unit.element = input; unit.anchor = input; unit.rawText = input.value.replace(/\r\n/g, '\n').trimEnd();
+        }
+        const codeInput = !fresh && block.querySelector('.folio-code-input');
+        if (codeInput && units.at(-1)?.block === block) {
+          const unit = units.at(-1); unit.element = codeInput; unit.anchor = codeInput; unit.codeText = codeInput.value.replace(/\r\n/g, '\n').trimEnd();
         }
       }
       return units;
@@ -126,14 +138,15 @@
       const icon = icons[unit.kind] || icons.block;
       handle.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${icon}"/></svg><svg class="folio-drag-grip" viewBox="0 0 12 20" aria-hidden="true">`
         + [4, 10, 16].map(y => `<circle cx="3" cy="${y}" r="1.3"/><circle cx="9" cy="${y}" r="1.3"/>`).join('') + '</svg>';
-      handle.dataset.kind = unit.kind; handle.setAttribute('aria-label', `拖动${labels[unit.kind]}`);
-      handle.title = `拖动${labels[unit.kind]} · Esc 取消`;
-      handle.style.left = `${Math.max(4, root.left - 58)}px`;
-      handle.style.top = `${Math.max(4, unit.kind === 'table' ? rect.top - 32 : rect.top + Math.min(rect.height, 32) / 2 - 14)}px`;
+      handle.dataset.kind = unit.kind; handle.setAttribute('aria-label', `${labels[unit.kind]}操作，按住可拖动`);
+      handle.title = `点击打开菜单 · 按住拖动${labels[unit.kind]}`;
+      const folding = unit.kind === 'heading' && unit.block.querySelector('.folio-heading-fold');
+      handle.style.left = `${Math.max(4, root.left - (folding && root.left >= 90 ? 86 : 58))}px`;
+      handle.style.top = `${Math.max(4, unit.kind === 'table' || folding && root.left < 90 ? rect.top - 32 : rect.top + Math.min(rect.height, 32) / 2 - 14)}px`;
       handle.hidden = false;
     }
     function hoverAt(event) {
-      if (drag || !canMove()) return;
+      if (drag || menuTarget || !canMove()) return;
       if (handle.contains(event.target)) return;
       if (!main.contains(event.target)) {
         // Keep the handle available while crossing the small gutter from its block.
@@ -149,6 +162,65 @@
       }) || candidates.at(-1);
       setHover(unit || null);
     }
+    function closeMenu(restore = false) {
+      if (!menuTarget) return;
+      const unit = menuTarget.unit; menuTarget = null; menu.hidden = true; handle.setAttribute('aria-expanded', 'false');
+      if (restore && unit.element.isConnected && canMove()) { setHover(unit); handle.focus({ preventScroll: true }); }
+    }
+    function openMenu(current) {
+      if (read() !== current.base || !canMove() || !current.unit.element.isConnected) return;
+      menuTarget = { unit: current.unit, base: current.base }; setHover(current.unit);
+      menu.hidden = false; menu.setAttribute('aria-label', `${labels[current.unit.kind]}操作`); handle.setAttribute('aria-expanded', 'true');
+      populateFormats(); positionMenu(); remove.focus({ preventScroll: true });
+    }
+    function positionMenu() {
+      const rect = handle.getBoundingClientRect();
+      menu.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - menu.offsetWidth - 8))}px`;
+      const preferred = rect.bottom + menu.offsetHeight + 6 <= innerHeight - 8 ? rect.bottom + 6 : rect.top - menu.offsetHeight - 6;
+      menu.style.top = `${Math.max(8, Math.min(preferred, innerHeight - menu.offsetHeight - 8))}px`;
+    }
+    function validTarget(selected) { return selected && read() === selected.base && canMove() && selected.unit.element.isConnected; }
+    function populateFormats() {
+      choices.replaceChildren();
+      const options = window.FolioBlockFormats.options(menuTarget.base, menuTarget.unit);
+      choices.hidden = divider.hidden = !options.some(option => !option.current);
+      for (const option of choices.hidden ? [] : options) {
+        const item = document.createElement('button'); item.type = 'button'; item.dataset.convertFormat = option.id;
+        item.setAttribute('role', 'menuitemradio'); item.setAttribute('aria-checked', String(option.current)); item.disabled = option.current;
+        item.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${icons[option.icon]}"/></svg>`;
+        const label = document.createElement('span'); label.textContent = option.label; item.append(label);
+        if (option.current) { const checked = document.createElement('span'); checked.className = 'folio-format-check'; checked.textContent = '✓'; checked.setAttribute('aria-hidden', 'true'); item.append(checked); }
+        choices.append(item);
+      }
+      choices.scrollTop = 0;
+    }
+    choices.addEventListener('click', event => {
+      const option = event.target.closest('[data-convert-format]'); if (!option || option.disabled) return;
+      const selected = menuTarget;
+      if (!validTarget(selected)) { closeMenu(); status.textContent = '内容已更新，请重新选择。'; return; }
+      const updated = window.FolioBlockFormats.convert(selected.base, selected.unit, option.dataset.convertFormat);
+      if (updated === null || updated === selected.base) { status.textContent = '此内容暂时无法转换，请选择其他格式。'; return; }
+      const label = option.textContent; closeMenu(); setHover(null); main.focus({ preventScroll: true });
+      if (commit(selected.base, updated)) status.textContent = `已转换为${label}，可撤销`;
+    });
+    remove.addEventListener('click', event => {
+      event.preventDefault(); event.stopPropagation(); const selected = menuTarget;
+      closeMenu();
+      if (!validTarget(selected)) { status.textContent = '内容已更新，请重新选择。'; return; }
+      const { unit, base } = selected, updated = base.slice(0, unit.start) + base.slice(unit.end);
+      setHover(null); main.focus({ preventScroll: true });
+      if (commit(base, updated)) status.textContent = `${labels[unit.kind]}已删除，可撤销`;
+    });
+    menu.addEventListener('keydown', event => {
+      if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); event.stopPropagation(); closeMenu(true); }
+      else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault(); event.stopPropagation();
+        const items = [...menu.querySelectorAll('button:not([disabled])')].filter(item => item.getClientRects().length), index = items.indexOf(document.activeElement);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : Math.max(0, Math.min(items.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+        items[next]?.focus();
+      }
+    });
+    document.addEventListener('pointerdown', event => { if (menuTarget && !menu.contains(event.target) && !handle.contains(event.target)) closeMenu(); }, true);
     function chooseTarget() {
       if (!drag?.ready || !drag.moved) return;
       if (read() !== drag.base || !canMove()) { cancel(); return; }
@@ -190,26 +262,31 @@
       if (previous && handle.hasPointerCapture(previous.pointerId)) handle.releasePointerCapture(previous.pointerId);
       document.body.classList.remove('folio-is-dragging'); ghost.hidden = true; guide.hidden = true; setHover(null);
     }
-    handle.addEventListener('pointerdown', async event => {
-      if (event.button !== 0 || !hovered || !canMove()) return;
-      event.preventDefault(); event.stopPropagation();
-      main.focus({ preventScroll: true });
-      const selected = hovered, identity = { key: selected.key, occurrence: selected.occurrence };
-      const current = { pointerId: event.pointerId, originX: event.clientX, originY: event.clientY, x: event.clientX, y: event.clientY, moved: false, ready: false };
-      drag = current; handle.setPointerCapture(event.pointerId);
+    async function prepareGesture(current, selected) {
+      const identity = { key: selected.key, occurrence: selected.occurrence };
       try {
         if (!await prepare()) { if (drag === current) cancel(); return; }
         if (drag !== current) return;
         current.units = collect(true);
         current.unit = selected.rawText ? current.units.filter(unit => read().slice(unit.start, unit.end).replace(/\r\n/g, '\n').trimEnd() === selected.rawText)
           .sort((a, b) => Math.abs(a.start - Number(selected.block.dataset.sourceStart)) - Math.abs(b.start - Number(selected.block.dataset.sourceStart)))[0]
+          : selected.codeText !== undefined ? current.units.filter(unit => unit.kind === 'code' && unit.element.querySelector('code')?.textContent.trimEnd() === selected.codeText)
+            .sort((a, b) => Math.abs(a.start - Number(selected.block.dataset.sourceStart)) - Math.abs(b.start - Number(selected.block.dataset.sourceStart)))[0]
           : current.units.find(unit => unit.key === identity.key && unit.occurrence === identity.occurrence);
-        if (!current.unit) { cancel(); status.textContent = '内容已更新，请重新拖动。'; return; }
+        if (!current.unit) { cancel(); status.textContent = '内容已更新，请重新选择。'; return; }
         current.base = read(); current.ready = true;
         ghost.textContent = `${labels[current.unit.kind]} · ${current.unit.name || '空内容'}`;
         if (current.moved) { document.body.classList.add('folio-is-dragging'); ghost.hidden = false; chooseTarget(); }
         frame = requestAnimationFrame(tick);
       } catch { if (drag === current) cancel(); }
+    }
+    handle.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || !hovered || !canMove()) return;
+      event.preventDefault(); event.stopPropagation();
+      if (menuTarget) { closeMenu(true); return; }
+      main.focus({ preventScroll: true });
+      const current = { pointerId: event.pointerId, originX: event.clientX, originY: event.clientY, x: event.clientX, y: event.clientY, moved: false, ready: false };
+      drag = current; handle.setPointerCapture(event.pointerId); current.prepared = prepareGesture(current, hovered);
     });
     document.addEventListener('pointermove', event => {
       if (!drag) {
@@ -217,35 +294,47 @@
         if (!hoverFrame) hoverFrame = requestAnimationFrame(() => { hoverFrame = 0; hoverAt(lastPointer); });
         return;
       }
-      if (event.pointerId !== drag.pointerId) return;
+      if (event.pointerId !== drag.pointerId || drag.released) return;
       event.preventDefault(); drag.x = event.clientX; drag.y = event.clientY;
       if (Math.hypot(drag.x - drag.originX, drag.y - drag.originY) > 5) drag.moved = true;
       if (drag.ready && drag.moved) { document.body.classList.add('folio-is-dragging'); ghost.hidden = false; chooseTarget(); }
     }, { passive: false });
-    document.addEventListener('pointerup', event => {
+    document.addEventListener('pointerup', async event => {
       if (!drag || event.pointerId !== drag.pointerId) return;
       event.preventDefault(); event.stopPropagation();
-      const current = drag;
+      const current = drag; current.released = true;
+      if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+      await current.prepared;
+      if (drag !== current || !current.ready) return;
       if (current.ready && current.moved) chooseTarget();
       const drop = drag?.drop; cancel();
-      if (drop && read() === current.base && canMove()) {
+      if (!current.moved) openMenu(current);
+      else if (drop && read() === current.base && canMove()) {
         const updated = moveSource(current.base, current.unit, drop.target, drop.after);
         if (updated !== current.base && commit(current.base, updated)) status.textContent = `${labels[current.unit.kind]}已移动`;
       }
     }, true);
-    handle.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); });
-    handle.addEventListener('lostpointercapture', () => { if (drag) cancel(); });
+    handle.addEventListener('click', async event => {
+      event.preventDefault(); event.stopPropagation();
+      if (event.detail !== 0 || drag || !hovered || !canMove()) return;
+      if (menuTarget) { closeMenu(true); return; }
+      const current = { moved: false, ready: false }, selected = hovered; drag = current;
+      await prepareGesture(current, selected);
+      if (drag !== current || !current.ready) return;
+      cancel(); openMenu(current);
+    });
+    handle.addEventListener('lostpointercapture', () => { if (drag && !drag.released) cancel(); });
     document.addEventListener('pointercancel', cancel);
-    window.addEventListener('blur', cancel);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) cancel(); });
+    window.addEventListener('blur', () => { closeMenu(); cancel(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { closeMenu(); cancel(); } });
     document.addEventListener('keydown', event => {
       if (!drag) return;
       if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); cancel(); status.textContent = '已取消移动'; }
       else if (event.metaKey || event.ctrlKey) cancel();
       else { event.preventDefault(); event.stopImmediatePropagation(); }
     }, true);
-    window.addEventListener('scroll', () => { if (!drag) setHover(null); }, { passive: true });
-    window.addEventListener('resize', cancel);
-    return { refresh() { if (drag?.ready) cancel(); else if (!drag) setHover(null); } };
+    window.addEventListener('scroll', () => { closeMenu(); if (!drag) setHover(null); }, { passive: true });
+    window.addEventListener('resize', () => { closeMenu(); cancel(); });
+    return { refresh() { closeMenu(); if (drag?.ready) cancel(); else if (!drag) setHover(null); } };
   };
 })();

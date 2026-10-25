@@ -7,6 +7,9 @@
   let version;
   let pendingTask = null;
   let editor;
+  let outline;
+  let outlineError;
+  let wrapCode = host?.getState()?.wrapCode !== false;
   const taskStates = { pending: '待办', progress: '进行中', done: '已完成' };
   let taskMenu, taskMenuTarget;
   const taskState = checkbox => checkbox.dataset.folioTaskState || (checkbox.checked ? 'done' : 'pending');
@@ -96,6 +99,11 @@
   if (host) {
     function applyMessage(message, force = false) {
       if (!force && editor?.receive(message)) return;
+      if (message?.type === 'outline-error') { outlineError = message.error; showError(outlineError); return; }
+      if (message?.type === 'outline-saved') {
+        if (outlineError && document.querySelector('.folio-status')?.textContent === outlineError) showError('');
+        outlineError = undefined; return;
+      }
       if (message?.type === 'error') {
         if (pendingTask) {
           const checkbox = document.querySelector(taskSelector(pendingTask));
@@ -124,6 +132,7 @@
       showError(message.error);
       enhanceContent();
       editor?.attach(message);
+      outline?.attach(message);
       if (message.writable === false) enhanceContent();
       const checkbox = focusedTask && main.querySelector(taskSelector(focusedTask));
       checkbox?.focus({ preventScroll: true });
@@ -131,6 +140,7 @@
       if (checkbox && oldTaskTop !== undefined) window.scrollBy(0, checkbox.getBoundingClientRect().top - oldTaskTop);
     }
     editor = window.FolioEditor?.({ host, showError, applyContent: message => applyMessage(message, true), enhance: enhanceContent });
+    outline = window.FolioOutline?.({ host, prepare: () => editor?.prepareView() ?? Promise.resolve(true), showError });
     window.addEventListener('message', event => applyMessage(event.data));
     window.addEventListener('scroll', () => host.setState({ ...host.getState(), scroll: window.scrollY }), { passive: true });
     document.addEventListener('change', event => {
@@ -171,7 +181,7 @@
   async function copyCode(button) {
     const code = button.closest('.folio-code-block')?.querySelector('pre code');
     if (!code) return;
-    const text = code.textContent || '';
+    const text = button.closest('.folio-code-block').querySelector('.folio-code-input')?.value ?? code.textContent ?? '';
     let copied = false;
     try {
       if (navigator.clipboard?.writeText) {
@@ -180,16 +190,17 @@
       }
     } catch { /* Use the selection-based fallback supported by editor webviews. */ }
     if (!copied) {
+      const input = button.closest('.folio-code-block').querySelector('.folio-code-input'), caret = input && [input.selectionStart, input.selectionEnd];
       const selection = window.getSelection();
       const ranges = selection ? Array.from({ length: selection.rangeCount }, (_, i) => selection.getRangeAt(i).cloneRange()) : [];
       const range = document.createRange();
       range.selectNodeContents(code);
-      selection?.removeAllRanges();
-      selection?.addRange(range);
+      if (input) input.select();
+      else { selection?.removeAllRanges(); selection?.addRange(range); }
       try { copied = document.execCommand('copy'); } catch { copied = false; }
       if (copied) {
-        selection?.removeAllRanges();
-        ranges.forEach(saved => selection?.addRange(saved));
+        if (input) input.setSelectionRange(...caret);
+        else { selection?.removeAllRanges(); ranges.forEach(saved => selection?.addRange(saved)); }
       }
     }
     button.textContent = copied ? '已复制' : '请按 ⌘C 复制';
@@ -204,6 +215,11 @@
   }
 
   function handleClick(event) {
+    const wrapping = event.target.closest('.folio-code-wrap');
+    if (wrapping && event.type === 'click') {
+      event.preventDefault(); event.stopPropagation(); wrapCode = !wrapCode;
+      host?.setState({ ...(host.getState() || {}), wrapCode }); enhanceCode(); editor?.resize(); return;
+    }
     if (!(event.target instanceof Element)) return;
     if (event.type === 'auxclick' && event.button !== 1) return;
     const button = event.target.closest('.folio-copy');
@@ -220,7 +236,7 @@
       // Cursor's window-level link handler ignores defaultPrevented and would also open the resource URL externally.
       event.stopPropagation();
       if (href.startsWith('#')) {
-        try { document.getElementById(decodeURIComponent(href.slice(1)))?.scrollIntoView(); } catch { /* Ignore malformed anchors. */ }
+        try { const target = document.getElementById(decodeURIComponent(href.slice(1))); outline?.reveal(target); target?.scrollIntoView(); } catch { /* Ignore malformed anchors. */ }
       } else {
         const target = link.getAttribute('data-href') || href;
         void (editor ? editor.flush() : Promise.resolve(true)).then(ok => { if (ok) host.postMessage({ type: 'link', href: target }); });
@@ -243,6 +259,7 @@
   function watchLocalDate() {
     clearTimeout(dateTimer);
     refreshDateHeadings();
+    outline?.refresh();
     const now = new Date(), midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
     // Also notice clock/timezone changes; focus refreshes immediately after the app resumes.
     dateTimer = setTimeout(watchLocalDate, Math.min(60000, Math.max(100, midnight - now + 100)));
@@ -250,7 +267,16 @@
   window.addEventListener('focus', watchLocalDate);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) watchLocalDate(); });
 
+  function enhanceCode() {
+    for (const card of document.querySelectorAll('.folio-code-block')) {
+      card.classList.toggle('is-unwrapped', !wrapCode);
+      const button = card.querySelector('.folio-code-wrap');
+      button?.setAttribute('aria-pressed', String(wrapCode));
+      if (button) button.title = wrapCode ? '关闭本页代码自动换行' : '开启本页代码自动换行';
+    }
+  }
   function enhanceContent() {
+    enhanceCode();
     refreshDateHeadings();
     document.querySelectorAll('.folio-copy:not([data-folio-ready])').forEach(button => {
       button.dataset.folioReady = 'true';
@@ -284,6 +310,7 @@
       checkbox.classList.toggle('is-pending', Boolean(pendingTask && Number(checkbox.dataset.folioTaskLine) === pendingTask.line));
     });
     if (taskMenuTarget && (!taskMenuTarget.isConnected || taskMenuTarget.disabled)) closeTaskMenu();
+    outline?.refresh();
     // The labels just created are already initialized; do not scan the entire document again for our own mutations.
     observer.takeRecords();
   }

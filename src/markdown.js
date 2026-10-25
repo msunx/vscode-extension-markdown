@@ -1,6 +1,8 @@
 'use strict';
 
 const installed = Symbol.for('muyang.folio.markdown');
+const highlight = require('highlight.js');
+const codeLanguages = highlight.listLanguages().map(id => ({ id, name: highlight.getLanguage(id).name || id, aliases: highlight.getLanguage(id).aliases || [] }));
 const alertNames = { NOTE: '提示', TIP: '建议', IMPORTANT: '重要', WARNING: '警告', CAUTION: '注意' };
 
 function addAlerts(md) {
@@ -114,7 +116,7 @@ function addEditableBlocks(md) {
   md.core.ruler.push('folio_editable_blocks', state => {
     const output = [];
     const lines = state.src.split('\n');
-    for (const token of state.tokens) if (token.type === 'list_item_open' && token.map && token.attrGet('class')?.split(' ').includes('task-list-item')) {
+    for (const token of state.tokens) if (token.type === 'list_item_open' && token.map) {
       token.attrSet('data-folio-move-start-line', String(token.map[0])); token.attrSet('data-folio-move-end-line', String(token.map[1]));
     }
     for (let i = 0; i < state.tokens.length; i++) {
@@ -139,12 +141,13 @@ function addEditableBlocks(md) {
       const finish = Math.max(token.map[1], ...state.tokens.slice(i, end + 1).map(item => item.map?.[1] || 0));
       const source = lines.slice(token.map[0], finish).join('\n');
       const rich = ['paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open', 'blockquote_open'].includes(token.type)
-        && !/(<\/?[a-z!]|\[\^|\]\s*\[|\$|^\s*>?\s*\[!|\*\[|!\[)/im.test(source)
+        && !/(<\/?[a-z!]|\[\^|\]\s*\[|\$|^\s*>?\s*\[!|\*\[|!\[)/im.test(editableStyleSource(source))
         && !(Object.keys(state.env.references || {}).length && /\[[^\]]+\](?!\()/.test(source))
         && !state.tokens.slice(i, end + 1).some(item => ['fence', 'code_block', 'table_open', 'html_block'].includes(item.type)
           || item.children?.some(child => ['link_open', 'image'].includes(child.type) && child.meta?.isReference));
       const open = new state.Token('folio_block_open', 'section', 1);
-      open.meta = { start: token.map[0], end: finish, mode: token.type === 'table_open' ? 'table' : rich ? 'rich' : 'source', kind: token.tag || token.type };
+      const image = token.type === 'paragraph_open' && state.tokens[i + 1]?.children?.length === 1 && state.tokens[i + 1].children[0].type === 'image';
+      open.meta = { start: token.map[0], end: finish, mode: token.type === 'fence' ? 'code' : image ? 'image' : token.type === 'table_open' ? 'table' : rich ? 'rich' : 'source', kind: token.tag || token.type };
       output.push(open, ...state.tokens.slice(i, end + 1), new state.Token('folio_block_close', 'section', -1));
       i = end;
     }
@@ -155,6 +158,17 @@ function addEditableBlocks(md) {
     return `<section class="folio-block" data-start-line="${block.start}" data-end-line="${block.end}" data-edit-mode="${block.mode}" data-kind="${block.kind}"><div class="folio-block-content">`;
   };
   md.renderer.rules.folio_block_close = () => '</div></section>\n';
+}
+
+function editableStyleSource(source) {
+  const stack = []; let valid = true;
+  const text = source.replace(/<\/?(?:span|u|strong|em|s|mark)\b[^>]*>/gi, tag => {
+    if (/^<\/(span|u|strong|em|s|mark)>$/i.test(tag)) { if (stack.pop() !== tag.slice(2, -1).toLowerCase()) valid = false; return ''; }
+    if (/^<(u|strong|em|s|mark)>$/i.test(tag)) { stack.push(tag.slice(1, -1).toLowerCase()); return ''; }
+    if (/^<span style="(?:color:#[\da-f]{6}(?:;background-color:#[\da-f]{6})?|background-color:#[\da-f]{6})">$/i.test(tag)) { stack.push('span'); return ''; }
+    valid = false; return tag;
+  });
+  return valid && !stack.length ? text : source;
 }
 
 function extendMarkdownIt(md) {
@@ -170,13 +184,17 @@ function extendMarkdownIt(md) {
   addTasks(md);
   addAlerts(md);
 
-  const fence = md.renderer.rules.fence;
   md.renderer.rules.fence = (tokens, index, options, env, self) => {
     const language = tokens[index].info.trim().split(/\s+/)[0] || 'text';
     const label = md.utils.escapeHtml(language);
-    const code = fence(tokens, index, options, env, self);
-    const header = `<div class="folio-code-header"><span>${label}</span><button type="button" class="folio-copy" aria-label="复制代码">复制</button></div>`;
-    return `<div class="folio-code-block">${header}${code}</div>\n`;
+    let code = md.utils.escapeHtml(tokens[index].content);
+    if (highlight.getLanguage(language) && tokens[index].content.length <= 200000) {
+      try { code = highlight.highlight(tokens[index].content, { language, ignoreIllegals: true }).value; } catch { /* Unknown syntax stays readable as plain text. */ }
+    }
+    const header = `<div class="folio-code-header"><span class="folio-code-language-label">${label}</span><div class="folio-code-actions">`
+      + '<button type="button" class="folio-code-wrap" aria-label="自动换行" aria-pressed="true" title="自动换行">换行</button>'
+      + '<button type="button" class="folio-copy" aria-label="复制代码">复制</button></div></div>';
+    return `<div class="folio-code-block" data-language="${label}">${header}<pre><code class="hljs language-${label}">${code}</code></pre></div>\n`;
   };
 
   const openTable = md.renderer.rules.table_open || ((tokens, index, options, env, self) => self.renderToken(tokens, index, options));
@@ -188,4 +206,4 @@ function extendMarkdownIt(md) {
   return md;
 }
 
-module.exports = { extendMarkdownIt, taskMarker };
+module.exports = { extendMarkdownIt, taskMarker, codeLanguages };

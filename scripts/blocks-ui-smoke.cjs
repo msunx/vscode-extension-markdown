@@ -25,7 +25,7 @@ const snapshot = () => JSON.parse(fs.readFileSync(path.join(runtime, 'blocks-sou
         const session = await context.newCDPSession(frame);
         const { value } = (await session.send('Runtime.evaluate', {
           expression: '(()=>{const d=document.getElementById("active-frame")?.contentDocument;return {id:new URL(location.href).searchParams.get("id"),'
-            + 'visible:d?.visibilityState,base:d?.baseURI,ready:!!d?.querySelector("table")}})()', returnByValue: true
+            + 'visible:d?.visibilityState,base:d?.baseURI,ready:!!d?.querySelector(".folio-block")}})()', returnByValue: true
         })).result;
         if (value?.visible === 'visible' && value.ready && value.base?.includes(`blocks-${round}.md`)
           && await page.locator(`iframe[src*="id=${value.id}"]`).isVisible()) return { session, id: value.id };
@@ -102,11 +102,36 @@ const snapshot = () => JSON.parse(fs.readFileSync(path.join(runtime, 'blocks-sou
     await until(()=>source()===expected,'移动撤销重做');
     await until(()=>evaluate(p,"return !d.__oldBlocks.isConnected && d.querySelector('.folio-recovery').hidden;"),'移动重绘');
   };
+  const blockMenu = async (p, name, selector) => {
+    await hover(p, selector || await mark(p,name));
+    await until(()=>evaluate(p,"return !d.querySelector('.folio-drag-handle').hidden;"),'块手柄出现');
+    const grip=await point(p,'.folio-drag-handle',false);await page.mouse.move(grip.x,grip.y);await page.mouse.click(grip.x,grip.y);
+    await until(()=>evaluate(p,"return !d.querySelector('.folio-block-menu').hidden && d.activeElement.matches('.folio-block-menu button');"),'单击打开块菜单');
+  };
+  const deleteAndRestore = async (p, name, payload, selector) => {
+    const before=source();await blockMenu(p,name,selector);
+    assert.equal(source(),before,'打开菜单不修改正文');
+    await page.keyboard.press('Escape');assert(await evaluate(p,"return d.querySelector('.folio-block-menu').hidden && d.activeElement.matches('.folio-drag-handle');"));
+    await page.keyboard.press('Enter');await until(()=>evaluate(p,"return !d.querySelector('.folio-block-menu').hidden;"),'键盘打开块菜单');
+    if(roundName==='lf' && name==='父任务')await page.screenshot({path:path.join(evidence,'block-actions-menu.png')});
+    await evaluate(p,"d.__oldBlocks=d.querySelector('.folio-block');");await click(p,'.folio-block-menu .is-destructive');
+    const after=before.replace(payload,'');await until(()=>source()===after,'仅删除选中的块');
+    await until(()=>evaluate(p,"return !d.__oldBlocks.isConnected && d.querySelector('.folio-block-menu').hidden;"),'删除重绘');
+    await history(p,'Meta+z',before);await history(p,'Meta+Shift+z',after);await history(p,'Meta+z',before);
+  };
   let roundName;
   try {
     for (const round of ['lf','crlf']) {
-      roundName=round; await stage(round); await action('folio.preview').click(); let p=await preview(round);
+      roundName=round; await stage(round); while (await page.locator('.notifications-toasts .codicon-notifications-clear:visible, .notifications-toasts .codicon-close:visible').count()) await page.locator('.notifications-toasts .codicon-notifications-clear:visible, .notifications-toasts .codicon-close:visible').first().click(); await action('folio.preview').click(); let p=await preview(round);
       await page.setViewportSize({width:1440,height:1100});
+      await deleteAndRestore(p,'移动子项','  - [ ] 移动子项\n');
+      await deleteAndRestore(p,'父任务','- [ ] 父任务\n  - [x] 保留子项\n  - [ ] 移动子项\n');
+      await deleteAndRestore(p,'目标标题','## 目标标题\n');
+      await deleteAndRestore(p,'第二逻辑行','第二逻辑行 [链接](./target.md)\n','a[href]');
+      const originalList=await evaluate(p,"return [...d.querySelectorAll('.folio-block-content > ul')].find(e=>e.textContent.includes('普通条目一')).textContent.trim();");
+      await deleteAndRestore(p,originalList,'- 普通条目一\n  - 普通子项\n- 普通条目二\n');
+      const originalTable=await evaluate(p,"return d.querySelector('table').textContent.trim();");
+      await deleteAndRestore(p,originalTable,'<!-- folio:table-widths 160,240 -->\n\n| 项目 | 说明 |\n| --- | :---: |\n| 保留 | **表格格式** |\n');
       assert.equal(await move(p,'移动子项','同级任务'),'task');
       assert(source().includes('  - [x] 保留子项\n- [ ] 移动子项\n- [ ] 同级任务'));
       const before=source(); await move(p,'父任务','同级任务',true); const after=source();
@@ -142,9 +167,12 @@ const snapshot = () => JSON.parse(fs.readFileSync(path.join(runtime, 'blocks-sou
       await evaluate(p,"const e=d.querySelector('[data-drag-target]'),r=d.createRange();r.selectNodeContents(e);r.collapse(false);d.getSelection().removeAllRanges();d.getSelection().addRange(r);");
       await page.keyboard.press('Enter');await page.keyboard.insertText('新任务');assert.equal(await move(p,'新任务','同级任务'),'task');
       await click(p,'pre');
-      await evaluate(p,"const e=d.querySelector('.folio-source-input'),i=e.value.indexOf(';');e.focus();e.setSelectionRange(i,i);");
+      await evaluate(p,"const e=d.querySelector('.folio-code-input'),i=e.value.indexOf(';');e.focus();e.setSelectionRange(i,i);");
       await page.keyboard.insertText(' + 1');
-      assert.equal(await move(p,'代码块','末尾正文',false,false,'.folio-source-input'),'code');
+      await until(()=>source().includes('const example = 1 + 1;'),'代码编辑同步');
+      await deleteAndRestore(p,'代码块','```js\nconst example = 1 + 1;\n```\n','.folio-code-input');
+      await click(p,'pre');
+      assert.equal(await move(p,'代码块','末尾正文',false,false,'.folio-code-input'),'code');
       assert.equal(await move(p,'引用第一行\n引用第二行','目标标题'),'blockquote');
       await move(p,'父任务','有序任务');
       assert(source().includes('- [ ] 父任务\n  - [x] 保留子项\n10. [ ] 有序任务\n    - [x] 有序任务子项'));
@@ -160,14 +188,20 @@ const snapshot = () => JSON.parse(fs.readFileSync(path.join(runtime, 'blocks-sou
         await until(async()=>await evaluate(p,'return d.defaultView.scrollY;')>start+12,'边缘自动滚动');
         await page.keyboard.press('Escape');await page.mouse.up();await page.setViewportSize({width:1440,height:1100});
       }
+      await blockMenu(p,'删除后不再出现');await click(p,'.folio-block-menu .is-destructive');await until(()=>!source().includes('删除后不再出现'),'删除并保留结果');
       await page.keyboard.press('Meta+s');await until(()=>fs.readFileSync(path.join(runtime,`blocks-${round}.md`),'utf8')===snapshot().source,'保存拖动结果');
       const saved=source(); await page.keyboard.press('Meta+w'); await action('folio.preview').click();p=await preview(round);assert.equal(source(),saved);
       await hover(p,await mark(p,'父任务'));await page.screenshot({path:path.join(evidence,`blocks-${round}.png`)});
-      result.rounds.push({round,status:'passed',taskSubtree:true,wholeList:true,tableMetadata:true,logicalLine:true,editedBlock:true,newParagraph:true,newTask:true,rawCode:true,mixedTaskMarkers:true,codeAndQuote:true,cancel:true,undoRedo:true,savedReopened:true});done(round);
+      result.rounds.push({round,status:'passed',blockMenu:true,deleteScope:true,deleteUndoRedo:true,keyboardMenu:true,editedCodeMenu:true,taskSubtree:true,wholeList:true,tableMetadata:true,logicalLine:true,editedBlock:true,newParagraph:true,newTask:true,rawCode:true,mixedTaskMarkers:true,codeAndQuote:true,cancel:true,undoRedo:true,savedReopened:true});done(round);
     }
     await stage('readonly');await action('folio.preview').click();const p=await preview('readonly');
     await hover(p,await mark(p,'父任务'));assert(await evaluate(p,"return d.querySelector('.folio-drag-handle').hidden && !d.querySelector('[contenteditable=true]');"));
-    result.readonly='passed';done('readonly');await stage('complete'); result.status='passed';
+    result.readonly='passed';done('readonly');await stage('empty');const empty=await preview('empty');
+    await blockMenu(empty,'唯一内容');await click(empty,'.folio-block-menu .is-destructive');await until(()=>!source().trim(),'删除最后一个块');
+    await until(()=>evaluate(empty,"return !!d.querySelector('[contenteditable=true]');"),'空文档保留输入位置');
+    await page.keyboard.insertText('继续输入');await until(()=>source().includes('继续输入'),'删除后继续写作');await page.keyboard.press('Meta+s');
+    await until(()=>fs.readFileSync(path.join(runtime,'blocks-empty.md'),'utf8')===snapshot().source,'空文档重新保存');result.empty='passed';done('empty');
+    await stage('complete'); result.status='passed';
   }catch(error){result.status='failed';result.error=error.stack;await page.screenshot({path:path.join(evidence,'blocks-failure.png')});throw error;}
   finally{fs.writeFileSync(path.join(evidence,'blocks-ui-verification.json'),JSON.stringify(result,null,2));await browser.close();}
   console.log(JSON.stringify(result));

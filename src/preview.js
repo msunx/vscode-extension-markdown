@@ -2,7 +2,8 @@
 
 const vscode = require('vscode');
 const { randomBytes } = require('node:crypto');
-const { taskMarker } = require('./markdown');
+const { taskMarker, codeLanguages } = require('./markdown');
+const { ProjectImages } = require('./images');
 const { pickProjectFile } = require('./files');
 const { TemplateStore } = require('./templates');
 const viewType = 'folio.markdownPreview';
@@ -71,6 +72,9 @@ class PreviewProvider {
       return;
     }
     this.documents.set(panel, document);
+    const images = new ProjectImages(document, panel.webview);
+    const outlineKey = `folio.outline:${document.uri.toString()}`;
+    let outlineState = this.context.workspaceState.get(outlineKey, {});
     const extensions = ['vscode.markdown-language-features', 'vscode.markdown-math'].map(id => vscode.extensions.getExtension(id)).filter(Boolean);
     panel.webview.options = {
       enableScripts: true,
@@ -108,7 +112,7 @@ class PreviewProvider {
         });
         if (disposed || request !== revision || version !== document.version) return;
         const message = { type: 'content', html, version, historyVersion, historyReason, source: document.getText(),
-          writable: vscode.workspace.fs.isWritableFileSystem(document.uri.scheme) !== false, error: error || '' };
+          writable: vscode.workspace.fs.isWritableFileSystem(document.uri.scheme) !== false, codeLanguages, outlineState, error: error || '' };
         if (ready) await panel.webview.postMessage(message);
         else bufferedContent = message;
       } catch {
@@ -124,6 +128,27 @@ class PreviewProvider {
     const listeners = [
       panel.webview.onDidReceiveMessage(message => {
         if (!message || typeof message !== 'object') return;
+        if (message.type === 'outline-state' && message.state && Array.isArray(message.state.folded) && typeof message.state.open === 'boolean') {
+          const keys = value => Array.isArray(value) ? value.filter(key => typeof key === 'string' && key.length <= 10000).slice(0, 512) : [];
+          outlineState = { open: message.state.open, folded: keys(message.state.folded), collapsed: keys(message.state.collapsed) };
+          const state = outlineState;
+          queue = queue.then(async () => {
+            await this.context.workspaceState.update(outlineKey, state);
+            if (!disposed) void panel.webview.postMessage({ type: 'outline-saved' });
+          }).catch(() => {
+            if (!disposed) void panel.webview.postMessage({ type: 'outline-error', error: '阅读状态暂时无法记住；当前折叠仍然有效，可继续阅读或稍后重试。' });
+          });
+        }
+        if (message.type === 'images' && Number.isInteger(message.id)) {
+          void (async () => {
+            try {
+              if (vscode.workspace.fs.isWritableFileSystem(document.uri.scheme) === false) throw new Error('此文档为只读，无法插入图片。');
+              const result = message.action === 'list' ? await images.list() : message.action === 'select' ? await images.select(message.image) : null;
+              if (!result) throw new Error('无法识别图片操作。');
+              if (!disposed) await panel.webview.postMessage({ type: 'images-result', id: message.id, ok: true, ...result });
+            } catch (error) { if (!disposed) await panel.webview.postMessage({ type: 'images-result', id: message.id, ok: false, error: error.message || '读取图片失败，请重试。' }); }
+          })();
+        }
         if (message.type === 'templates' && Number.isInteger(message.id)) {
           void (async () => {
             try {
@@ -162,7 +187,7 @@ class PreviewProvider {
           queue = queue.then(async () => {
             try {
               const ok = await document.save();
-              if (!disposed) await panel.webview.postMessage({ type: 'save-result', ok, error: ok ? '' : '保存失败，编辑内容仍在文档中。请检查文件权限。' });
+              if (!disposed) await panel.webview.postMessage({ type: 'save-result', ok, source: document.getText(), error: ok ? '' : '保存失败，编辑内容仍在文档中。请检查文件权限。' });
             } catch {
               if (!disposed) await panel.webview.postMessage({ type: 'save-result', ok: false, error: '保存失败，编辑内容仍在文档中。请检查文件权限。' });
             }
@@ -240,8 +265,14 @@ class PreviewProvider {
       + '</head><body data-folio-interactive="true"><div class="folio-status" role="status" aria-live="polite" hidden></div><main class="markdown-body" dir="auto"></main>'
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/emoji.js'))}"></script>`
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/table.js'))}"></script>`
+      + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/block-formats.js'))}"></script>`
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/blocks.js'))}"></script>`
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/templates.js'))}"></script>`
+      + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/format.js'))}"></script>`
+      + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/code.js'))}"></script>`
+      + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/images.js'))}"></script>`
+      + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/image-viewer.js'))}"></script>`
+      + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/outline.js'))}"></script>`
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/editor.js'))}"></script>`
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/preview.js'))}"></script></body></html>`;
   }

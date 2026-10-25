@@ -1,6 +1,29 @@
 (() => {
   'use strict';
   const escapeText = text => text.replace(/([\\`*_[\]<>~])/g, '\\$1').replace(/^(\s*)(#{1,6}|[-+]|\d+\.)(?=\s|$)/gm, '$1\\$2');
+  const adjacentCharacter = (node, previous) => {
+    while (node) {
+      const sibling = previous ? node.previousSibling : node.nextSibling;
+      if (sibling) {
+        if (sibling.nodeName === 'BR') return ' ';
+        if (sibling.textContent) return previous ? [...sibling.textContent].at(-1) : [...sibling.textContent][0];
+        node = sibling;
+      } else {
+        node = node.parentElement;
+        if (!node?.matches('span, strong, b, em, i, u, s, del, strike, code, mark, a, sup, sub, font')) return '';
+      }
+    }
+    return '';
+  };
+  const marked = (marker, text, node) => text.trim() ? text.replace(/^(\s*)([\s\S]*?)(\s*)$/, (_, before, body, after) => {
+    const punctuation = character => /[\p{P}\p{S}]/u.test(character || ''), word = character => character && !/\s/u.test(character) && !punctuation(character);
+    // A delimiter beside punctuation inside a word is literal Markdown. Use semantic HTML for that selection so formatting survives reopening.
+    if (!before && punctuation([...body][0]) && word(adjacentCharacter(node, true)) || !after && punctuation([...body].at(-1)) && word(adjacentCharacter(node, false))) {
+      const tag = { '**': 'strong', '*': 'em', '~~': 's', '==': 'mark' }[marker];
+      return `${before}<${tag}>${body}</${tag}>${after}`;
+    }
+    return `${before}${marker}${body}${marker}${after}`;
+  }) : text;
   const inline = node => {
     if (node.nodeType === Node.TEXT_NODE) {
       const text = node.textContent.replace(/\u00a0/g, ' ');
@@ -12,16 +35,22 @@
     const tag = node.tagName.toLowerCase();
     if (node.matches('.folio-copy, .folio-code-header, .folio-block-tools, input')) return '';
     if (tag === 'br') return '  \n';
-    if (tag === 'strong' || tag === 'b') return `**${inner()}**`;
-    if (tag === 'em' || tag === 'i') return `*${inner()}*`;
-    if (tag === 'del' || tag === 's' || tag === 'strike') return `~~${inner()}~~`;
-    if (tag === 'mark') return `==${inner()}==`;
+    if (tag === 'strong' || tag === 'b') return marked('**', inner(), node);
+    if (tag === 'em' || tag === 'i') return marked('*', inner(), node);
+    if (tag === 'del' || tag === 's' || tag === 'strike') return marked('~~', inner(), node);
+    if (tag === 'mark') return marked('==', inner(), node);
+    if (tag === 'u') return `<u>${inner()}</u>`;
+    if (tag === 'span' || tag === 'font') {
+      const color = window.FolioFormatting.color(node.style.color || node.getAttribute('color')), background = window.FolioFormatting.color(node.style.backgroundColor);
+      const style = [color && `color:${color}`, background && `background-color:${background}`].filter(Boolean).join(';');
+      return style ? `<span style="${style}">${inner()}</span>` : inner();
+    }
     if (tag === 'sup') return `^${inner()}^`;
     if (tag === 'sub') return `~${inner()}~`;
     if (tag === 'code') {
       const value = node.textContent;
       const fence = '`'.repeat(Math.max(0, ...(value.match(/`+/g) || []).map(part => part.length)) + 1);
-      const padding = value.startsWith('`') || value.endsWith('`') ? ' ' : '';
+      const padding = value.startsWith('`') || value.endsWith('`') || value.startsWith(' ') && value.endsWith(' ') && value.trim() ? ' ' : '';
       return `${fence}${padding}${value}${padding}${fence}`;
     }
     const title = node.hasAttribute('title') ? ` "${node.getAttribute('title').replace(/([\\"])/g, '\\$1')}"` : '';
@@ -109,6 +138,16 @@
     let fileRequest = null;
     let emojiRequest = null;
     let templateRequest = null;
+    let imageRequest = null;
+    let savedSource = null;
+    const codes = window.FolioCode({ canEdit: () => writable && !conflicted && !composing,
+      edit: card => { if (active?.code && active.block === card.closest('.folio-block')) finish(); else open(card.closest('.folio-block'), true); },
+      changeLanguage: (card, language) => {
+        if (!card?.isConnected || !open(card.closest('.folio-block')) || !active.code) return;
+        const before = source, caret = captureCaret(); active.code.language = language; sync(); rememberListEdit(before, caret, captureCaret()); finish();
+      }
+    });
+    const images = window.FolioImages({ host, insert: insertProjectImage, restore: restoreImageCaret });
     const blocks = window.FolioBlocks({ main, read: () => source, canMove: () => writable && !conflicted && !composing, prepare: prepareMove, commit: moveContent });
     const tables = window.FolioTables({
       canEdit: () => writable && !conflicted && !composing,
@@ -121,6 +160,14 @@
     });
     const emojiPicker = window.FolioEmojiPicker({ onSelect: insertEmoji, onClose: closeEmoji });
     const templates = window.FolioTemplates({ host, insert: insertTemplate, restore: restoreTemplateCaret });
+    const formatting = window.FolioFormatting({
+      context: () => active && !active.raw && writable && !conflicted && !composing && menu.hidden && !emojiRequest && !templates.element.open && !images.element.open
+        && !active.block.querySelector('.folio-resource-form') ? active.content : null,
+      change: action => {
+        if (!active || active.raw || !writable || conflicted || composing) return;
+        sync(); const before = source, caret = captureCaret(); action(); sync(true); rememberListEdit(before, caret, captureCaret());
+      }
+    });
     const menu = document.createElement('div');
     menu.className = 'folio-insert-menu'; menu.hidden = true; menu.setAttribute('role', 'listbox'); menu.id = 'folio-insert-menu'; menu.setAttribute('aria-label', '插入模块');
     const footer = document.createElement('div');
@@ -134,9 +181,11 @@
     const eol = () => source.includes('\r\n') ? '\r\n' : '\n';
     const state = () => host.getState() || {};
     const draft = () => active ? source.slice(0, active.start) + value() + source.slice(active.end) : source || state().draft?.markdown || '';
-    function feedback(text) { footer.textContent = text; footer.hidden = !text; }
+    function feedback(text) { if (!text && footer.textContent === '已保存' && source === savedSource) return; footer.textContent = text; footer.hidden = !text; }
     function remember() { host.setState({ ...state(), draft: { markdown: draft() } }); }
-    function fail(message) { conflicted = true; documentEnd.hidden = true; closeMenu(); showError(message); feedback('草稿未同步'); recovery.hidden = false; remember(); settle(); }
+    function fail(message) {
+      conflicted = true; documentEnd.hidden = true; closeMenu(); formatting.hide(); showError(message); feedback('草稿未同步'); recovery.hidden = false; remember(); settle();
+    }
     copy.addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(draft()); copy.textContent = '草稿已复制'; } catch { showError('复制失败，请选中编辑内容后手动复制。'); }
     });
@@ -146,9 +195,23 @@
     function offsets(text) {
       const result = [0]; for (let i = 0; i < text.length; i++) if (text[i] === '\n') result.push(i + 1); result.push(text.length); return result;
     }
+    function updatePlaceholders() {
+      const unchanged = active && active.lastHTML === active.content.innerHTML;
+      const paragraphs = new Set([...main.querySelectorAll('p[data-folio-placeholder]'), ...(!active || active.raw ? [] : active.content.querySelectorAll('p'))]);
+      for (const paragraph of paragraphs) {
+        // CSS :only-child ignores text nodes, so text followed by a single <br> is not necessarily an empty paragraph.
+        const empty = !composing && active?.content.isContentEditable && active.content.contains(paragraph) && !paragraph.textContent && !paragraph.querySelector(':not(br)');
+        paragraph.toggleAttribute('data-folio-placeholder', Boolean(empty));
+      }
+      // Presentation attributes must not turn an untouched empty paragraph into a document edit.
+      if (unchanged) active.lastHTML = active.content.innerHTML;
+    }
     function attach(message) {
+      formatting.hide();
+      codes.attach(message);
       closeEmoji(false);
       source = message.source || ''; writable = message.writable !== false;
+      if (!footer.textContent || footer.textContent === '已保存') feedback(source === savedSource ? '已保存' : '');
       renderedSource = source;
       documentEnd.hidden = !writable || conflicted;
       const lines = offsets(source);
@@ -163,10 +226,11 @@
       if (historyCaret) { restoreCaret(historyCaret); historyCaret = null; }
       if (state().draft?.markdown && !pending.size && !active) { recovery.hidden = false; showError('有一份未同步的草稿，可复制后继续编辑，或放弃草稿并刷新。'); }
       blocks.refresh(); for (const resolve of renderWaiters) resolve(true); renderWaiters.clear();
+      codes.enhance(); enhanceImages();
     }
     async function prepareMove() {
       const wasEditing = !!active;
-      if (!writable || conflicted || composing || !await flush()) return false;
+      if (conflicted || composing || !await flush()) return false;
       finish();
       if (!wasEditing && renderedSource === source) return true;
       return new Promise(resolve => {
@@ -287,18 +351,20 @@
       const start = Number(block.dataset.sourceStart), end = Number(block.dataset.sourceEnd);
       const original = source.slice(start, end);
       const content = block.querySelector('.folio-block-content');
-      active = { block, content, input: content, start, end, tail: original.match(/(?:\r?\n)*$/)?.[0] || '', prefix: block.dataset.prefix || '', raw: block.dataset.editMode === 'source', changed: false, lastHTML: content.innerHTML };
+      active = { block, content, input: content, start, end, tail: original.match(/(?:\r?\n)*$/)?.[0] || '', prefix: block.dataset.prefix || '',
+        raw: ['source', 'code'].includes(block.dataset.editMode), changed: false, lastHTML: content.innerHTML };
       block.classList.add('is-editing');
-      if (active.raw) {
+      if (block.dataset.editMode === 'code' && codes.open(active, original)) { resize(); active.input.focus(); }
+      else if (active.raw) {
         content.hidden = true;
         const input = document.createElement('textarea'); input.className = 'folio-source-input'; input.setAttribute('aria-label', '编辑此块的 Markdown'); input.spellcheck = false;
         input.value = original; block.prepend(input); active.input = input; resize(); input.focus();
-      } else if (block.dataset.editMode !== 'table') {
+      } else if (!['table', 'image'].includes(block.dataset.editMode)) {
         content.contentEditable = 'true'; content.setAttribute('role', 'textbox'); content.setAttribute('aria-multiline', 'true'); content.spellcheck = false;
         document.execCommand('defaultParagraphSeparator', false, 'p');
       }
       if (!active.raw) { tables.activate(content); active.lastHTML = content.innerHTML; }
-      feedback(''); enhance();
+      feedback(''); updatePlaceholders(); enhance();
       if (focus) {
         const cell = block.dataset.editMode === 'table' && content.querySelector('th, td');
         if (cell) tables.select(cell, true);
@@ -327,10 +393,12 @@
     function resize() { if (active?.raw) { active.input.style.height = 'auto'; active.input.style.height = `${Math.max(70, active.input.scrollHeight)}px`; } }
     function value() {
       if (!active) return '';
+      if (active.code) return codes.value(active).replace(/\r?\n/g, eol());
       if (active.raw) return active.input.value.replace(/\r?\n/g, eol());
       return active.prefix + Array.from(active.content.childNodes, serialize).join('').trimEnd().replace(/\r?\n/g, eol()) + active.tail;
     }
     function sync(force = false, replacement) {
+      updatePlaceholders();
       if (!active || conflicted || composing) return;
       if (!active.raw && !force && active.lastHTML === active.content.innerHTML) return;
       active.lastHTML = active.content.innerHTML;
@@ -351,13 +419,15 @@
     }
     function finish(refresh = true) {
       if (!active || composing) return;
+      formatting.hide();
       closeEmoji(false);
       cancelFileRequest();
       sync(); closeMenu(); active.block.classList.remove('is-editing'); active.content.contentEditable = 'false'; active.content.removeAttribute('role');
       tables.deactivate(active.content);
-      if (active.raw) { active.input.readOnly = true; active.input.classList.add('is-settling'); }
+      if (active.code && !conflicted) codes.finish(active);
+      else if (active.raw) { active.input.readOnly = true; active.input.classList.add('is-settling'); }
       if (conflicted) return;
-      active = null; enhance();
+      active = null; updatePlaceholders(); enhance();
       if (refresh) settle();
     }
     function settle() {
@@ -373,6 +443,7 @@
     }
     function receive(message) {
       if (!message || typeof message !== 'object') return false;
+      if (images.receive(message)) return true;
       if (templates.receive(message)) return true;
       if (message.type === 'edit-result') {
         if (!pending.has(message.id)) return true;
@@ -382,7 +453,7 @@
         return true;
       }
       if (message.type === 'flush') { void flush().then(ok => host.postMessage({ type: 'flushed', id: message.id, ok })); return true; }
-      if (message.type === 'save-result') { if (!message.ok) showError(message.error); else feedback('已保存'); return true; }
+      if (message.type === 'save-result') { if (!message.ok) showError(message.error); else { savedSource = message.source ?? source; feedback('已保存'); } return true; }
       if (message.type === 'file-result') { insertProjectFile(message); return true; }
       if (message.type !== 'content') return false;
       if ((message.historyVersion || 0) > historyVersion) {
@@ -653,7 +724,7 @@
       const query = match ? match[1].toLowerCase() : '';
       const inlineMode = /^(TH|TD)$/.test(location.line.tagName) || force && !match && Boolean(location.line.textContent.trim());
       const standalone = location.line.parentElement === active.content && /^(P|H[1-6])$/.test(location.line.tagName);
-      const items = modules.filter(item => (!inlineMode || ['link', 'file', 'emoji'].includes(item[0])) && (item[0] !== 'template' || standalone)
+      const items = modules.filter(item => (!inlineMode || ['link', 'file', 'emoji'].includes(item[0])) && (!['template', 'image'].includes(item[0]) || standalone)
         && `${item[0]} ${item[1]} ${item[3]}`.toLowerCase().includes(query));
       const selected = menuState?.query === query ? Math.min(menuState.selected, items.length - 1) : 0;
       const opening = menu.hidden;
@@ -711,6 +782,10 @@
     }
     function selectModule(id) {
       if (!menuState) return;
+      if (id === 'image') {
+        sync(); const insertion = captureInsertion(menuState, true); if (!insertion) return;
+        imageRequest = { ...insertion, beforeCaret: captureCaret() }; closeMenu(); formatting.hide(); images.open(); return;
+      }
       if (id === 'template') {
         sync(); const insertion = captureInsertion(menuState, true); if (!insertion) return;
         templateRequest = { ...insertion, beforeCaret: captureCaret() }; closeMenu(); templates.open(); return;
@@ -731,7 +806,6 @@
       const remainder = trigger ? target.textContent.slice(menuState.before.length) : target.textContent;
       const preserved = !trigger && /^(P|H[1-6])$/.test(target.tagName) ? Array.from(target.childNodes, node => node.cloneNode(true)) : null;
       closeMenu();
-      if (id === 'image') { resourceForm(id, target, remainder); return; }
       let node;
       if (id === 'bullet' || id === 'ordered' || id === 'task') {
         node = document.createElement(id === 'ordered' ? 'ol' : 'ul'); const item = document.createElement('li');
@@ -749,6 +823,7 @@
       } else { node = document.createElement(/^h[1-6]$/.test(id) ? id : 'p'); node.textContent = remainder; if (!remainder) node.append(document.createElement('br')); }
       if (preserved && !['code', 'divider'].includes(id)) (node.querySelector('li, p') || node).replaceChildren(...preserved);
       replaceLine(node, target);
+      if (id === 'code' && active.content.children.length === 1) { historyCaret = { start: active.start, offset: 0, raw: true }; finish(); }
     }
     function cancelFileRequest() {
       if (fileRequest) host.postMessage({ type: 'cancel-pick-file' });
@@ -791,6 +866,9 @@
     function insertTemplate(markdown) {
       const request = templateRequest;
       if (!request || !validInsertion(request) || request.target.parentElement !== active.content) return '插入位置已变化，请关闭模板库，在新的位置重新打开。模板已保留。';
+      templateRequest = null; return insertBlockMarkdown(request, markdown);
+    }
+    function insertBlockMarkdown(request, markdown) {
       const children = Array.from(active.content.childNodes), index = children.indexOf(request.target);
       const beforeRange = document.createRange(); beforeRange.selectNodeContents(request.target); beforeRange.setEnd(request.range.startContainer, request.range.startOffset);
       const afterRange = document.createRange(); afterRange.selectNodeContents(request.target); afterRange.setStart(request.range.endContainer, request.range.endOffset);
@@ -805,7 +883,36 @@
       const position = active.start + (preceding + chunk).replace(/\r?\n/g, eol()).length;
       const before = source, afterCaret = { emptyBlock: true, start: position, end: position };
       sync(true, replacement); rememberListEdit(before, request.beforeCaret, afterCaret);
-      templateRequest = null; historyCaret = afterCaret; finish(); return '';
+      historyCaret = afterCaret; finish(); return '';
+    }
+    function restoreImageCaret() {
+      const request = imageRequest; imageRequest = null;
+      if (!request || !validInsertion(request)) return;
+      active.input.focus({ preventScroll: true }); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(request.caret);
+    }
+    function insertProjectImage(message) {
+      const request = imageRequest;
+      if (!request || !validInsertion(request) || request.target.parentElement !== active.content) return '文档已变化，请关闭选择框，在新的位置重新插入。';
+      const image = document.createElement('img'); image.setAttribute('src', message.href); image.alt = message.description || message.name;
+      imageRequest = null; return insertBlockMarkdown(request, inline(image));
+    }
+    function enhanceImages() {
+      for (const block of main.querySelectorAll('.folio-block[data-edit-mode=image]')) {
+        if (block.querySelector('.folio-image-tools')) continue;
+        const tools = document.createElement('div'); tools.className = 'folio-image-tools';
+        const replace = document.createElement('button'); replace.type = 'button'; replace.textContent = '更换图片'; replace.disabled = !writable;
+        replace.onclick = () => {
+          if (!open(block)) return; sync(); const target = active.content.querySelector('p'), range = document.createRange(); range.selectNodeContents(target);
+          imageRequest = { editor: active, source, target, html: target.innerHTML, range, caret: range.cloneRange(), beforeCaret: captureCaret() }; images.open(true);
+        };
+        const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '删除'; remove.disabled = !writable;
+        remove.onclick = () => {
+          if (!open(block)) return; const before = source, caret = captureCaret(), paragraph = document.createElement('p'); paragraph.append(document.createElement('br'));
+          active.content.replaceChildren(paragraph); sync(true); historyCaret = { emptyBlock: true, start: active.start, end: active.start };
+          rememberListEdit(before, caret, historyCaret); finish();
+        };
+        tools.append(replace, remove); block.append(tools);
+      }
     }
     function closeEmoji(restore = false) {
       const request = emojiRequest; emojiRequest = null; emojiPicker.close();
@@ -847,39 +954,35 @@
       insertLink(request, message.href, message.name);
     }
     function resourceForm(kind, target, text, insertion) {
-      const form = document.createElement('form'); form.className = 'folio-resource-form'; form.setAttribute('aria-label', kind === 'image' ? '插入图片' : '插入链接');
-      const title = document.createElement('strong'); title.textContent = kind === 'image' ? '插入图片' : '插入链接';
-      const nameLabel = document.createElement('label'); nameLabel.textContent = kind === 'image' ? '图片说明' : '链接文字';
-      const name = document.createElement('input'); name.value = text; name.placeholder = kind === 'image' ? '图片内容' : '显示文字'; nameLabel.append(name);
-      const urlLabel = document.createElement('label'); urlLabel.textContent = kind === 'image' ? '图片网址或相对路径' : '链接地址';
-      const url = document.createElement('input'); url.required = true; url.placeholder = kind === 'image' ? './images/photo.png' : 'https://'; urlLabel.append(url);
-      const actions = document.createElement('div'); const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = '取消';
-      const submit = document.createElement('button'); submit.type = 'submit'; submit.textContent = '插入'; actions.append(cancel, submit); form.append(title, nameLabel, urlLabel, actions);
+      const form = document.createElement('form'); form.className = 'folio-resource-form'; form.setAttribute('aria-label', '插入链接'); form.noValidate = true;
+      const title = document.createElement('strong'); title.textContent = '插入链接';
+      const nameLabel = document.createElement('label'); nameLabel.textContent = '链接文字';
+      const name = document.createElement('input'); name.className = 'folio-control'; name.value = text; name.placeholder = '显示文字'; nameLabel.append(name);
+      const urlLabel = document.createElement('label'); urlLabel.textContent = '链接地址';
+      const url = document.createElement('input'); url.className = 'folio-control'; url.inputMode = 'url'; url.spellcheck = false; url.autocomplete = 'off'; url.placeholder = 'https://'; urlLabel.append(url);
+      const error = document.createElement('p'); error.className = 'folio-form-error'; error.setAttribute('role', 'alert'); error.hidden = true;
+      const actions = document.createElement('div'), cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = '取消';
+      const submit = document.createElement('button'); submit.type = 'submit'; submit.textContent = '插入链接'; actions.append(cancel, submit); form.append(title, nameLabel, urlLabel, error, actions);
       active.block.append(form); url.focus();
       const close = () => {
-        form.remove();
-        if (insertion) {
-          if (!validInsertion(insertion)) return;
-          active.input.focus(); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(insertion.caret);
-        } else { active?.content.focus(); if (target.isConnected) caretEnd(target); }
+        form.remove(); if (!validInsertion(insertion)) return;
+        active.input.focus(); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(insertion.caret);
       };
       cancel.onclick = close;
       form.onkeydown = event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); } };
       form.onsubmit = event => {
         event.preventDefault(); const address = url.value.trim();
-        if (/^[a-z][a-z\d+.-]*:/i.test(address) && !/^(https?:|mailto:|file:)/i.test(address)) { url.setCustomValidity('请输入网页地址或文件路径'); url.reportValidity(); return; }
-        if (insertion) { form.remove(); insertLink(insertion, address, name.value || address); return; }
-        const p = document.createElement('p');
-        if (kind === 'image') { const img = document.createElement('img'); img.setAttribute('src', address); img.alt = name.value; p.append(img); }
-        else { const link = document.createElement('a'); link.setAttribute('href', address); link.textContent = name.value || address; p.append(link); }
-        form.remove(); replaceLine(p, target);
+        if (!address || /^[a-z][a-z\d+.-]*:/i.test(address) && !/^(https?:|mailto:|file:)/i.test(address)) {
+          error.textContent = address ? '请输入网页地址或文件路径。' : '请填写链接地址。'; error.hidden = false; url.setAttribute('aria-invalid', 'true'); url.focus(); return;
+        }
+        form.remove(); insertLink(insertion, address, name.value || address);
       };
-      url.oninput = () => url.setCustomValidity('');
+      url.oninput = () => { error.hidden = true; url.removeAttribute('aria-invalid'); };
     }
     menu.addEventListener('mousedown', event => event.preventDefault());
     menu.addEventListener('click', event => { const button = event.target.closest('[data-module]'); if (button) selectModule(button.dataset.module); });
     document.addEventListener('pointerdown', event => {
-      if (templates.element.open) return;
+      if (templates.element.open || images.element.open || formatting.element.contains(event.target) || codes.element.contains(event.target)) return;
       if (emojiPicker.element.contains(event.target)) return;
       if (emojiRequest) closeEmoji(false);
       if (!(event.target instanceof Element) || menu.contains(event.target) || recovery.contains(event.target)
@@ -908,20 +1011,31 @@
     main.addEventListener('click', event => {
       if (active?.content.contains(event.target) && event.target.closest('label.folio-task-label')) event.preventDefault();
     });
-    main.addEventListener('input', event => { if (active?.input.contains(event.target) || active?.input === event.target) { resize(); if (!composing && !event.isComposing) { sync(); updateMenu(); } } });
-    main.addEventListener('compositionstart', () => { composing = true; closeMenu(); });
+    const placeholderObserver = new MutationObserver(updatePlaceholders);
+    placeholderObserver.observe(main, { childList: true, subtree: true, characterData: true });
+    main.addEventListener('input', event => { if (active?.input.contains(event.target) || active?.input === event.target) { updatePlaceholders(); resize(); if (!composing && !event.isComposing) { sync(); updateMenu(); } } });
+    main.addEventListener('compositionstart', () => { composing = true; updatePlaceholders(); closeMenu(); formatting.hide(); });
     main.addEventListener('compositionend', () => { composing = false; sync(); updateMenu(); });
     main.addEventListener('beforeinput', event => { if (!autoList(event)) tables.beforeInput(event); });
     main.addEventListener('paste', paste);
     document.addEventListener('keydown', event => {
-      if (templates.element.open) return;
+      if (templates.element.open || images.element.open || codes.element.contains(event.target)) return;
       if (event.isComposing || composing) return;
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's' && active) { event.preventDefault(); event.stopPropagation(); void flush().then(ok => { if (ok) host.postMessage({ type: 'save' }); }); return; }
+      if (formatting.keydown(event)) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's' && writable) {
+        event.preventDefault(); event.stopPropagation(); void flush().then(ok => { if (ok) host.postMessage({ type: 'save' }); }); return;
+      }
       if (emojiPicker.element.contains(event.target)) return;
       if (event.target.closest?.('.folio-resource-form, .folio-task-menu')) return;
       if (event.target === documentEnd && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); editDocumentEnd(); return; }
       if (event.key === 'Enter' && event.target.classList?.contains('folio-block-content') && active?.content !== event.target) { event.preventDefault(); open(event.target.closest('.folio-block'), true); return; }
       if (!active) return;
+      if (active.code && event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey && event.target === active.input) {
+        event.preventDefault(); const input = active.input, start = input.selectionStart, end = input.selectionEnd;
+        if (!event.shiftKey) input.setRangeText('  ', start, end, 'end');
+        else { const line = input.value.lastIndexOf('\n', start - 1) + 1, count = Math.min(2, /^ */.exec(input.value.slice(line))[0].length); input.setRangeText('', line, line + count, 'end'); }
+        resize(); sync(); return;
+      }
       if (event.key === 'Backspace' && !event.metaKey && !event.ctrlKey && !event.altKey && event.target.isContentEditable
         && !event.target.closest('input, button, textarea, select') && backspaceEmptyTask()) {
         event.preventDefault(); event.stopPropagation(); closeMenu(); return;
@@ -950,9 +1064,9 @@
     }, true);
     window.addEventListener('resize', positionMenu);
     window.addEventListener('scroll', positionMenu, { passive: true });
-    window.addEventListener('beforeunload', () => { sync(); if (pending.size || conflicted) remember(); });
+    window.addEventListener('beforeunload', () => { placeholderObserver.disconnect(); sync(); if (pending.size || conflicted) remember(); });
     return {
-      attach, receive, flush,
+      attach, receive, flush, resize, prepareView: prepareMove,
       owns: node => Boolean(active?.content.contains(node)),
       allowTask: node => writable && !composing && !conflicted && (active?.content.contains(node) || (!active && !pending.size)),
       handleTask: node => { if (active?.content.contains(node)) { sync(true); return true; } return false; },
