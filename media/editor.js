@@ -59,7 +59,7 @@
     return inner();
   };
   function serialize(node) {
-    if (node.nodeType === Node.TEXT_NODE) return inline(node);
+    if (node.nodeType === Node.TEXT_NODE) return node.parentElement?.matches('.folio-block-content') && !node.textContent.trim() ? '' : inline(node);
     if (!(node instanceof Element)) return '';
     const tag = node.tagName.toLowerCase();
     if (node.matches('.folio-block-tools, .folio-code-header, .folio-table-controls, button, input')) return '';
@@ -639,6 +639,83 @@
       listEdits.push({ before, after: source, beforeCaret, afterCaret });
       if (listEdits.length > 16) listEdits.shift();
     }
+    function editableLines(content) {
+      const lines = [];
+      const visit = element => {
+        if (element.matches('p, h1, h2, h3, h4, h5, h6') || element.matches('li') && !element.querySelector(':scope > p')) {
+          lines.push({ node: element, text: element.querySelector(':scope > .folio-task-label') || element });
+          if (!element.matches('li')) return;
+        }
+        for (const child of element.children) if (child.matches('p, h1, h2, h3, h4, h5, h6, li, ul, ol, blockquote')) visit(child);
+      };
+      visit(content); return lines;
+    }
+    function backspaceAcrossLines() {
+      if (!active || active.raw || !active.content.isContentEditable || conflicted || !writable) return false;
+      const selection = window.getSelection();
+      if (!selection.isCollapsed || !selection.rangeCount || !active.content.contains(selection.anchorNode)) return false;
+      const lines = editableLines(active.content), current = lines.findLast(line => line.node.contains(selection.anchorNode));
+      if (!current) return false;
+      const prefix = document.createRange(); prefix.selectNodeContents(current.text.contains(selection.anchorNode) ? current.text : current.node);
+      prefix.setEnd(selection.anchorNode, selection.anchorOffset);
+      const preceding = prefix.cloneContents();
+      // A soft line break or a visible character still belongs to native text deletion.
+      if (preceding.querySelector('br, img, ul, ol, pre, table') || (current.text.matches('.folio-task-label') ? prefix.toString().trim() : prefix.toString())) return false;
+      let previous = lines[lines.indexOf(current) - 1], previousBlock = null;
+      if (!previous) {
+        previousBlock = active.block.previousElementSibling;
+        if (!previousBlock?.matches('.folio-block[data-edit-mode="rich"]') || previousBlock.classList.contains('folio-section-hidden')) return false;
+        previous = editableLines(previousBlock.querySelector('.folio-block-content')).at(-1);
+        if (!previous) return false;
+      }
+      sync(); closeMenu(); formatting.hide();
+      const before = source, beforeCaret = captureCaret();
+      if (previousBlock) {
+        // Join the editable roots synchronously so a held Backspace keeps working without waiting for a host render.
+        if (active.start === active.end) active.tail = source.slice(Number(previousBlock.dataset.sourceStart), active.end).match(/(?:\r?\n)*$/)?.[0] || '';
+        active.start = Number(previousBlock.dataset.sourceStart); active.prefix = previousBlock.dataset.prefix || '';
+        active.block.dataset.sourceStart = active.start; active.block.dataset.startLine = previousBlock.dataset.startLine;
+        active.content.prepend(...previousBlock.querySelector('.folio-block-content').childNodes); previousBlock.remove();
+        active.block.dataset.kind = active.content.firstElementChild?.tagName.toLowerCase() || 'p';
+      }
+      const nested = element => element instanceof Element && element.matches('ul, ol, blockquote, pre, table');
+      const inlineNodes = line => Array.from(line.text.childNodes).filter(node => !nested(node) && !(node instanceof Element && node.matches('input')));
+      const trimListWhitespace = line => {
+        if (!line.node.matches('li') && !line.text.matches('.folio-task-label')) return;
+        const nodes = inlineNodes(line), first = nodes[0], last = nodes.at(-1);
+        if (first?.nodeType === Node.TEXT_NODE) first.textContent = first.textContent.replace(/^\s+/, '');
+        if (last?.nodeType === Node.TEXT_NODE) last.textContent = last.textContent.replace(/\s+$/, '');
+      };
+      trimListWhitespace(previous); trimListWhitespace(current);
+      for (const line of [previous, current]) {
+        const nodes = inlineNodes(line);
+        if (!nodes.some(node => node.textContent || node instanceof Element && !node.matches('br'))) for (const node of nodes) node.remove();
+      }
+      const marker = document.createTextNode(''), children = inlineNodes(current);
+      const firstNested = Array.from(previous.text.children).find(nested);
+      previous.text.insertBefore(marker, firstNested || null);
+      for (const child of children) previous.text.insertBefore(child, firstNested || null);
+      const item = current.node.parentElement;
+      const removal = item.matches('li') && Array.from(item.childNodes).every(node => node === current.node || nested(node) || node.nodeType === Node.TEXT_NODE && !node.textContent.trim())
+        ? item : current.node;
+      const container = removal.parentElement;
+      if (removal.matches('li')) {
+        const descendants = Array.from(removal.children).filter(nested), parentItem = previous.node.closest('li');
+        if (parentItem === container.parentElement) {
+          for (const list of descendants) if (list.tagName === container.tagName) removal.before(...list.children); else container.before(list);
+        } else if (parentItem) parentItem.append(...descendants);
+        else previous.node.after(...descendants);
+      }
+      removal.remove();
+      // Remove empty list/quote wrappers, but retain following items and nested content.
+      let empty = container;
+      while (empty !== active.content && !empty.textContent.trim() && !empty.querySelector('li, input, img, pre, table, hr, p, h1, h2, h3, h4, h5, h6')) {
+        const parent = empty.parentElement; empty.remove(); empty = parent;
+      }
+      active.input.focus({ preventScroll: true });
+      const caret = document.createRange(); caret.setStart(marker, 0); caret.collapse(true); selection.removeAllRanges(); selection.addRange(caret);
+      sync(); rememberListEdit(before, beforeCaret, captureCaret()); return true;
+    }
     function backspaceEmptyTask() {
       if (active.raw || conflicted || !writable) return false;
       const selection = window.getSelection();
@@ -1016,7 +1093,13 @@
     main.addEventListener('input', event => { if (active?.input.contains(event.target) || active?.input === event.target) { updatePlaceholders(); resize(); if (!composing && !event.isComposing) { sync(); updateMenu(); } } });
     main.addEventListener('compositionstart', () => { composing = true; updatePlaceholders(); closeMenu(); formatting.hide(); });
     main.addEventListener('compositionend', () => { composing = false; sync(); updateMenu(); });
-    main.addEventListener('beforeinput', event => { if (!autoList(event)) tables.beforeInput(event); });
+    main.addEventListener('beforeinput', event => {
+      if (event.inputType === 'deleteContentBackward' && event.cancelable && !event.isComposing && !composing && active && event.target.isContentEditable
+        && !event.target.closest('input, button, textarea, select') && (backspaceEmptyTask() || backspaceAcrossLines())) {
+        event.preventDefault(); closeMenu(); return;
+      }
+      if (!autoList(event)) tables.beforeInput(event);
+    });
     main.addEventListener('paste', paste);
     document.addEventListener('keydown', event => {
       if (templates.element.open || images.element.open || codes.element.contains(event.target)) return;
@@ -1037,7 +1120,7 @@
         resize(); sync(); return;
       }
       if (event.key === 'Backspace' && !event.metaKey && !event.ctrlKey && !event.altKey && event.target.isContentEditable
-        && !event.target.closest('input, button, textarea, select') && backspaceEmptyTask()) {
+        && !event.target.closest('input, button, textarea, select') && (backspaceEmptyTask() || backspaceAcrossLines())) {
         event.preventDefault(); event.stopPropagation(); closeMenu(); return;
       }
       if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey && event.target.isContentEditable

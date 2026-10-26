@@ -184,6 +184,15 @@ function extendMarkdownIt(md) {
   addTasks(md);
   addAlerts(md);
 
+  const openParagraph = md.renderer.rules.paragraph_open || ((tokens, index, options, env, self) => self.renderToken(tokens, index, options));
+  md.renderer.rules.paragraph_open = (tokens, index, ...args) => {
+    const children = tokens[index + 1]?.children?.filter(token => token.type !== 'text' || token.content.trim());
+    const image = children?.length === 1 && children[0].type === 'image'
+      || children?.length === 3 && children[0].type === 'link_open' && children[1].type === 'image' && children[2].type === 'link_close';
+    if (image) tokens[index].attrJoin('class', 'folio-image-paragraph');
+    return openParagraph(tokens, index, ...args);
+  };
+
   md.renderer.rules.fence = (tokens, index, options, env, self) => {
     const language = tokens[index].info.trim().split(/\s+/)[0] || 'text';
     const label = md.utils.escapeHtml(language);

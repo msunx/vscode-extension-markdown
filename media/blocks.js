@@ -148,19 +148,25 @@
     function hoverAt(event) {
       if (drag || menuTarget || !canMove()) return;
       if (handle.contains(event.target)) return;
-      if (!main.contains(event.target)) {
-        // Keep the handle available while crossing the small gutter from its block.
-        const r = hovered && bounds(hovered);
-        if (r && event.clientX >= Number.parseFloat(handle.style.left) && event.clientX <= r.right && event.clientY >= r.top - 34 && event.clientY <= r.bottom + 8) return;
-        setHover(null); return;
+      const folding = event.target.closest('.folio-heading-fold');
+      if (folding && main.contains(folding)) {
+        setHover(collect().find(unit => unit.kind === 'heading' && unit.block === folding.parentElement) || null); return;
       }
       if (event.target.closest('button, .folio-resource-form, .folio-table-controls')) { setHover(null); return; }
-      const candidates = collect().filter(unit => unit.element.contains(event.target));
+      const candidates = main.contains(event.target) ? collect().filter(unit => unit.element.contains(event.target)) : [];
       const unit = candidates.reverse().find(item => {
         if (item.range) return [...item.range.getClientRects()].some(r => event.clientX >= r.left && event.clientX <= r.right && event.clientY >= r.top - 4 && event.clientY <= r.bottom + 4);
         const r = bounds(item); return event.clientY >= r.top - 4 && event.clientY <= r.bottom + 4;
       }) || candidates.at(-1);
-      setHover(unit || null);
+      if (unit) { setHover(unit); return; }
+      const block = event.target.closest('.folio-block');
+      if (hovered?.element.isConnected && !handle.hidden && (!block || block === hovered.block)) {
+        // The bridge also crosses the main's empty space when a narrow layout places the handle above a heading.
+        const r = bounds(hovered), h = handle.getBoundingClientRect();
+        if (event.clientX >= Math.min(h.left, r.left) - 4 && event.clientX <= Math.max(h.right, r.right)
+          && event.clientY >= Math.min(h.top, r.top) - 4 && event.clientY <= Math.max(h.bottom, r.bottom) + 8) return;
+      }
+      setHover(null);
     }
     function closeMenu(restore = false) {
       if (!menuTarget) return;

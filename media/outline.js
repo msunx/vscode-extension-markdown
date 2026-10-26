@@ -8,7 +8,8 @@
     node.setAttribute('aria-label', label); node.title = label; node.innerHTML = html; return node;
   };
   window.FolioOutline = function ({ host, prepare, showError }) {
-    const main = document.querySelector('.markdown-body'), wide = matchMedia('(min-width: 1100px)');
+    // A pinned outline needs room beside the centered reading column and its block controls.
+    const main = document.querySelector('.markdown-body'), wide = matchMedia('(min-width: 1440px)');
     const openIcon = icon('M4 6h2M10 6h10M4 12h2M10 12h10M4 18h2M10 18h10'), closeIcon = icon('M14 6l-6 6 6 6M20 6l-6 6 6 6');
     const toggle = button('folio-outline-toggle', '显示目录', openIcon);
     toggle.setAttribute('aria-controls', 'folio-outline'); toggle.setAttribute('aria-expanded', 'false');
