@@ -2,8 +2,48 @@
 
 const installed = Symbol.for('muyang.folio.markdown');
 const highlight = require('highlight.js');
+const { addFrontmatter } = require('./properties');
 const codeLanguages = highlight.listLanguages().map(id => ({ id, name: highlight.getLanguage(id).name || id, aliases: highlight.getLanguage(id).aliases || [] }));
 const alertNames = { NOTE: '提示', TIP: '建议', IMPORTANT: '重要', WARNING: '警告', CAUTION: '注意' };
+
+function addPlainQuotes(md) {
+  // Consume quote source before other block rules can turn its contents into headings, HTML, references or footnotes.
+  md.block.ruler.before('blockquote', 'folio_plain_quote', (state, startLine, endLine, silent) => {
+    const start = state.bMarks[startLine] + state.tShift[startLine];
+    if (state.sCount[startLine] - state.blkIndent >= 4 || state.src[start] !== '>') return false;
+    const first = state.src.slice(start + 1, state.eMarks[startLine]).replace(/^[ \t]/, '');
+    if (/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*$/i.test(first)) return false;
+    const callout = /^\[!CALLOUT\](?:[ \t]+(.*))?$/i.exec(first), emoji = callout?.[1]?.trim() || '🌈';
+    if (callout && emoji.length <= 32 && /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(emoji)
+      && [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(emoji)].length === 1) return false;
+    if (silent) return true;
+    const lines = [], terminators = state.md.block.ruler.getRules('blockquote'), parent = state.parentType;
+    state.parentType = 'blockquote';
+    let next = startLine;
+    try {
+      for (; next < endLine; next++) {
+        const position = state.bMarks[next] + state.tShift[next];
+        if (position >= state.eMarks[next] || state.sCount[next] < state.blkIndent) break;
+        if (state.src[position] === '>') lines.push(state.src.slice(position + 1, state.eMarks[next]).replace(/^[ \t]/, ''));
+        else {
+          if (!lines.at(-1)?.trim() || terminators.some(rule => rule(state, next, endLine, true))) break;
+          lines.push(state.getLines(next, next + 1, state.blkIndent, false));
+        }
+      }
+    } finally { state.parentType = parent; }
+    const open = state.push('blockquote_open', 'blockquote', 1);
+    open.markup = '>'; open.map = [startLine, next]; open.attrSet('class', 'folio-plain-quote');
+    for (const [index, line] of lines.entries()) {
+      const paragraph = state.push('paragraph_open', 'p', 1); paragraph.map = [startLine + index, startLine + index + 1]; paragraph.block = false;
+      const text = state.push('folio_quote_text', '', 0); text.content = line;
+      state.push('paragraph_close', 'p', -1);
+    }
+    state.push('blockquote_close', 'blockquote', -1).markup = '>';
+    state.line = next;
+    return true;
+  }, { alt: ['paragraph', 'reference', 'blockquote', 'list'] });
+  md.renderer.rules.folio_quote_text = (tokens, index) => md.utils.escapeHtml(tokens[index].content) || '<br>';
+}
 
 function addCallouts(md) {
   md.core.ruler.after('inline', 'folio_callouts', state => {
@@ -165,7 +205,8 @@ function addEditableBlocks(md) {
       const source = lines.slice(token.map[0], finish).join('\n');
       const callout = token.attrGet('class')?.split(' ').includes('folio-callout');
       const editableSource = callout ? source.replace(/^(\s*>[ \t]*)\[!CALLOUT\][^\n]*(?:\n|$)/i, '$1') : source;
-      const rich = ['paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open', 'blockquote_open'].includes(token.type)
+      const plainQuote = token.attrGet('class')?.split(' ').includes('folio-plain-quote');
+      const rich = plainQuote || ['paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open', 'blockquote_open'].includes(token.type)
         && !/(<\/?[a-z!]|\[\^|\]\s*\[|\$|^\s*>?\s*\[!|\*\[|!\[)/im.test(editableStyleSource(editableSource))
         && !(Object.keys(state.env.references || {}).length && /\[[^\]]+\](?!\()/.test(source))
         && !state.tokens.slice(i, end + 1).some(item => ['fence', 'code_block', 'table_open', 'html_block'].includes(item.type)
@@ -199,6 +240,7 @@ function editableStyleSource(source) {
 function extendMarkdownIt(md) {
   if (md[installed]) return md;
   md[installed] = true;
+  addFrontmatter(md);
   md.use(require('markdown-it-task-lists'), { enabled: false });
   md.use(require('markdown-it-footnote'));
   md.use(require('markdown-it-deflist'));
@@ -206,6 +248,7 @@ function extendMarkdownIt(md) {
   md.use(require('markdown-it-sub'));
   md.use(require('markdown-it-sup'));
   md.use(require('markdown-it-abbr'));
+  addPlainQuotes(md);
   addTasks(md);
   addAlerts(md);
   addCallouts(md);

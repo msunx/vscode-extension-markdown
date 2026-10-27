@@ -58,6 +58,13 @@
     if (tag === 'img') return `![${escapeText(node.getAttribute('alt') || '')}](${(node.getAttribute('data-href') || node.getAttribute('src') || '').replace(/([()\\])/g, '\\$1')}${title})`;
     return inner();
   };
+  function quoteText(node) {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent.replace(/\u00a0/g, ' ');
+    if (!(node instanceof Element)) return '';
+    if (node.tagName === 'BR') return '\n';
+    const text = Array.from(node.childNodes, quoteText).join('');
+    return node.matches('p, div') ? (node.lastChild?.nodeName === 'BR' ? text.slice(0, -1) : text) + '\n' : text;
+  }
   function serialize(node) {
     if (node.nodeType === Node.TEXT_NODE) return node.parentElement?.matches('.folio-block-content') && !node.textContent.trim() ? '' : inline(node);
     if (!(node instanceof Element)) return '';
@@ -97,6 +104,10 @@
       }).join(loose ? '\n\n' : '\n') + '\n\n';
     }
     if (tag === 'blockquote') {
+      if (node.matches('.folio-plain-quote')) {
+        const body = Array.from(node.childNodes).filter(child => child.nodeType !== Node.TEXT_NODE || child.textContent.trim()).map(quoteText).join('').replace(/\n$/, '');
+        return body.split('\n').map(line => line ? '> ' + line : '>').join('\n') + '\n\n';
+      }
       const body = Array.from(node.childNodes).filter(child => child.nodeType !== Node.TEXT_NODE || child.textContent.trim()).map(serialize).join('').trimEnd();
       const marker = node.matches('.folio-callout') ? `> [!CALLOUT] ${node.dataset.calloutEmoji || '🌈'}\n` : '';
       return marker + body.split('\n').map(line => '> ' + line).join('\n') + '\n\n';
@@ -204,7 +215,8 @@
       const paragraphs = new Set([...main.querySelectorAll('p[data-folio-placeholder]'), ...(!active || active.raw ? [] : active.content.querySelectorAll('p'))]);
       for (const paragraph of paragraphs) {
         // CSS :only-child ignores text nodes, so text followed by a single <br> is not necessarily an empty paragraph.
-        const empty = !composing && active?.content.isContentEditable && active.content.contains(paragraph) && !paragraph.textContent && !paragraph.querySelector(':not(br)');
+        const empty = !composing && active?.content.isContentEditable && active.content.contains(paragraph) && !paragraph.closest('.folio-plain-quote')
+          && !paragraph.textContent && !paragraph.querySelector(':not(br)');
         paragraph.toggleAttribute('data-folio-placeholder', Boolean(empty));
       }
       // Presentation attributes must not turn an untouched empty paragraph into a document edit.
@@ -562,7 +574,7 @@
       if (event.inputType !== 'insertText' || event.data !== ' ' || !event.cancelable || event.isComposing || composing
         || !active || active.raw || !writable || conflicted || !active.content.contains(event.target)) return false;
       const selection = window.getSelection(), location = lineAtCaret();
-      if (!selection.isCollapsed || !location || location.line.tagName !== 'P' || location.line.closest('li, pre, th, td')) return false;
+      if (!selection.isCollapsed || !location || location.line.tagName !== 'P' || location.line.closest('li, pre, th, td, .folio-plain-quote')) return false;
       const match = /^(?:-|(\d{1,9})\.?)$/.exec(location.before);
       if (!match) return false;
       const prefix = location.range.cloneRange(); prefix.selectNodeContents(location.line); prefix.setEnd(location.range.startContainer, location.range.startOffset);
@@ -699,7 +711,12 @@
       const marker = document.createTextNode(''), children = inlineNodes(current);
       const firstNested = Array.from(previous.text.children).find(nested);
       previous.text.insertBefore(marker, firstNested || null);
-      for (const child of children) previous.text.insertBefore(child, firstNested || null);
+      for (const child of children) {
+        if (previous.text.closest('.folio-plain-quote') && child instanceof Element && child.tagName !== 'BR') {
+          previous.text.insertBefore(document.createTextNode(quoteText(child)), firstNested || null);
+        }
+        else previous.text.insertBefore(child, firstNested || null);
+      }
       const item = current.node.parentElement;
       const removal = item.matches('li') && Array.from(item.childNodes).every(node => node === current.node || nested(node) || node.nodeType === Node.TEXT_NODE && !node.textContent.trim())
         ? item : current.node;
@@ -809,6 +826,7 @@
       const standalone = location.line.parentElement === active.content && /^(P|H[1-6])$/.test(location.line.tagName);
       const inCallout = location.line.closest('.folio-callout');
       const items = modules.filter(item => (!inlineMode || ['link', 'file', 'emoji'].includes(item[0])) && (!['template', 'image', 'callout'].includes(item[0]) || standalone)
+        && (!location.line.closest('.folio-plain-quote') || item[0] === 'emoji')
         && (!inCallout || !['code', 'table', 'divider', 'quote'].includes(item[0]))
         && `${item[0]} ${item[1]} ${item[3]}`.toLowerCase().includes(query));
       const selected = menuState?.query === query ? Math.min(menuState.selected, items.length - 1) : 0;
@@ -898,6 +916,7 @@
         item.append(document.createTextNode(remainder)); if (!remainder) item.append(document.createElement('br')); node.append(item);
       } else if (id === 'quote' || id === 'callout') {
         node = document.createElement('blockquote'); const paragraph = document.createElement('p'); paragraph.textContent = remainder; if (!remainder) paragraph.append(document.createElement('br')); node.append(paragraph);
+        if (id === 'quote') node.className = 'folio-plain-quote';
         if (id === 'callout') {
           node.className = 'folio-callout'; node.dataset.calloutEmoji = '🌈';
           const button = document.createElement('button'); button.type = 'button'; button.className = 'folio-callout-emoji'; button.contentEditable = 'false'; button.textContent = '🌈';
@@ -1126,6 +1145,7 @@
     main.addEventListener('compositionstart', () => { composing = true; updatePlaceholders(); closeMenu(); formatting.hide(); });
     main.addEventListener('compositionend', () => { composing = false; sync(); updateMenu(); });
     main.addEventListener('beforeinput', event => {
+      if (/^format/.test(event.inputType) && lineAtCaret()?.line.closest('.folio-plain-quote')) { event.preventDefault(); return; }
       if (event.inputType === 'deleteContentBackward' && event.cancelable && !event.isComposing && !composing && active && event.target.isContentEditable
         && !event.target.closest('input, button, textarea, select') && (backspaceEmptyTask() || backspaceAcrossLines())) {
         event.preventDefault(); closeMenu(); return;
@@ -1134,8 +1154,12 @@
     });
     main.addEventListener('paste', paste);
     document.addEventListener('keydown', event => {
+      if (event.target.closest?.('.folio-properties')) return;
       if (templates.element.open || images.element.open || codes.element.contains(event.target)) return;
       if (event.isComposing || composing) return;
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && /^[biue]$/i.test(event.key) && lineAtCaret()?.line.closest('.folio-plain-quote')) {
+        event.preventDefault(); event.stopPropagation(); return;
+      }
       if (formatting.keydown(event)) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's' && writable) {
         event.preventDefault(); event.stopPropagation(); void flush().then(ok => { if (ok) host.postMessage({ type: 'save' }); }); return;

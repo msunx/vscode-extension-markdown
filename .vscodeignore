@@ -33,3 +33,6 @@ node_modules/highlight.js/scss/**
 node_modules/highlight.js/styles/**
 node_modules/highlight.js/types/**
 node_modules/highlight.js/*.md
+node_modules/yaml/browser/**
+node_modules/yaml/**/*.d.ts
+node_modules/yaml/*.md

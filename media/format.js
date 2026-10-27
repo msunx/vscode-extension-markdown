@@ -87,7 +87,7 @@
       const range = selection.getRangeAt(0), element = node => node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
       const scopeOf = node => element(node)?.closest('.folio-task-label, p, h1, h2, h3, h4, h5, h6, th, td, li');
       const scope = scopeOf(range.startContainer);
-      if (!scope || scope !== scopeOf(range.endContainer) || !current.contains(scope) || !scope.isContentEditable || scope.closest('pre')
+      if (!scope || scope !== scopeOf(range.endContainer) || !current.contains(scope) || !scope.isContentEditable || scope.closest('pre, .folio-plain-quote')
         || range.cloneContents().querySelector('input, img, button, [contenteditable=false]')) return null;
       const prefix = range.cloneRange(); prefix.selectNodeContents(scope); prefix.setEnd(range.startContainer, range.startOffset);
       const start = prefix.toString().length, end = start + range.toString().length;

@@ -73,13 +73,13 @@
     const data = describe(base, unit); if (!data || !data.allowed.includes(target) || data.current === target) return null;
     if (data.items) return listSource(base, unit, data, target);
     const eol = base.includes('\r\n') ? '\r\n' : '\n';
-    const body = data.current === 'code' ? literal(data.body) : data.body;
+    const body = ['code', 'quote'].includes(data.current) ? literal(data.body) : data.body;
     let text;
     if (target === 'code') {
       const fence = '`'.repeat(Math.max(2, ...(data.body.match(/`+/g) || []).map(run => run.length)) + 1);
       text = `${fence}\n${data.body}\n${fence}`;
     } else if (target === 'text') text = protectStart(body);
-    else if (target === 'quote') text = protectStart(body).split('\n').map(line => '> ' + line).join('\n');
+    else if (target === 'quote') text = data.body.split('\n').map(line => '> ' + line).join('\n');
     else if (/^h[1-6]$/.test(target)) text = '#'.repeat(Number(target[1])) + ' ' + body.replace(/([ \t]+)(#+)([ \t]*)$/, '$1\\$2$3');
     else {
       const marker = target === 'ordered' ? '1. ' : '- ';

@@ -8,6 +8,7 @@
   let pendingTask = null;
   let editor;
   let outline;
+  let properties;
   let outlineError;
   let wrapCode = host?.getState()?.wrapCode !== false;
   const taskStates = { pending: '待办', progress: '进行中', done: '已完成' };
@@ -98,6 +99,7 @@
 
   if (host) {
     function applyMessage(message, force = false) {
+      if (properties?.receive(message)) return;
       if (!force && editor?.receive(message)) return;
       if (message?.type === 'outline-error') { outlineError = message.error; showError(outlineError); return; }
       if (message?.type === 'outline-saved') {
@@ -141,6 +143,7 @@
     }
     editor = window.FolioEditor?.({ host, showError, applyContent: message => applyMessage(message, true), enhance: enhanceContent });
     outline = window.FolioOutline?.({ host, prepare: () => editor?.prepareView() ?? Promise.resolve(true), showError });
+    properties = window.FolioProperties?.({ host, prepare: () => editor?.prepareView() ?? Promise.resolve(true) });
     window.addEventListener('message', event => applyMessage(event.data));
     window.addEventListener('scroll', () => host.setState({ ...host.getState(), scroll: window.scrollY }), { passive: true });
     document.addEventListener('change', event => {

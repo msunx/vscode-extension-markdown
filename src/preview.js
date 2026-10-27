@@ -6,6 +6,7 @@ const { taskMarker, codeLanguages } = require('./markdown');
 const { ProjectImages } = require('./images');
 const { pickProjectFile } = require('./files');
 const { TemplateStore } = require('./templates');
+const { readProperties, updateProperties } = require('./properties');
 const viewType = 'folio.markdownPreview';
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 
@@ -119,7 +120,7 @@ class PreviewProvider {
         });
         if (disposed || request !== revision || version !== document.version) return;
         const message = { type: 'content', html, version, historyVersion, historyReason, source: document.getText(),
-          writable: vscode.workspace.fs.isWritableFileSystem(document.uri.scheme) !== false, codeLanguages, outlineState, error: error || '' };
+          writable: vscode.workspace.fs.isWritableFileSystem(document.uri.scheme) !== false, codeLanguages, outlineState, properties: readProperties(document.getText()), error: error || '' };
         if (ready) await panel.webview.postMessage(message);
         else bufferedContent = message;
       } catch {
@@ -135,6 +136,30 @@ class PreviewProvider {
     const listeners = [
       panel.webview.onDidReceiveMessage(message => {
         if (!message || typeof message !== 'object') return;
+        if (message.type === 'properties' && Number.isInteger(message.id)) {
+          queue = queue.then(async () => {
+            let applied = false;
+            try {
+              if (message.action === 'save') {
+                const base = document.getText(), edit = updateProperties(base, message);
+                await updateBlock(document, { ...edit, base }); applied = true;
+                if (!await document.save()) throw new Error('写入磁盘失败，属性仍保留在编辑器中，请重试保存。');
+                await render();
+              } else if (message.action !== 'read') throw new Error('无法识别属性操作。');
+              let suggestedCreated = '';
+              if (document.uri.scheme === 'file') {
+                try {
+                  const stat = await require('node:fs/promises').stat(document.uri.fsPath); if (stat.birthtimeMs > 0) suggestedCreated = stat.birthtime.toISOString();
+                } catch { /* New or virtual files have no creation time. */ }
+              }
+              if (!disposed) await panel.webview.postMessage({ type: 'properties-result', id: message.id, ok: true, properties: readProperties(document.getText()), suggestedCreated,
+                writable: vscode.workspace.fs.isWritableFileSystem(document.uri.scheme) !== false });
+            } catch (error) {
+              if (!disposed) await panel.webview.postMessage({ type: 'properties-result', id: message.id, ok: false, error: error.message || '属性保存失败，请重试。',
+                field: error.field, applied, properties: applied ? readProperties(document.getText()) : undefined });
+            }
+          }).catch(() => {});
+        }
         if (message.type === 'outline-state' && message.state && Array.isArray(message.state.folded) && typeof message.state.open === 'boolean') {
           const keys = value => Array.isArray(value) ? value.filter(key => typeof key === 'string' && key.length <= 10000).slice(0, 512) : [];
           outlineState = { open: message.state.open, folded: keys(message.state.folded), collapsed: keys(message.state.collapsed) };
@@ -280,6 +305,7 @@ class PreviewProvider {
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/images.js'))}"></script>`
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/image-viewer.js'))}"></script>`
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/outline.js'))}"></script>`
+      + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/properties.js'))}"></script>`
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/editor.js'))}"></script>`
       + `<script nonce="${nonce}" src="${resource(vscode.Uri.joinPath(this.context.extensionUri, 'media/preview.js'))}"></script></body></html>`;
   }
