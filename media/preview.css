@@ -165,6 +165,26 @@ body.folio-has-outline { padding-top: 92px; }
 .markdown-body blockquote blockquote {
   margin: 12px 0 2px; padding: 2px 0 2px 14px; font-size: .95em; border: 0; border-left: 1px solid var(--folio-line); border-radius: 0; background: none; color: var(--folio-secondary);
 }
+.markdown-body blockquote.folio-callout {
+  position: relative; min-height: 64px; margin: 22px 0 26px; padding: 17px 20px 17px 62px;
+  border: 1px solid color-mix(in srgb, var(--folio-accent) 22%, var(--folio-bg)); border-left: 3px solid var(--folio-accent); border-radius: var(--folio-radius);
+  background: color-mix(in srgb, var(--folio-accent) 9%, var(--folio-bg)); color: var(--folio-fg); font-size: 1em;
+  transition: border-color 140ms, background-color 140ms;
+}
+.markdown-body .folio-callout > :nth-child(2) { margin-top: 0; }
+.markdown-body .folio-callout > :last-child { margin-bottom: 0; }
+.markdown-body .folio-callout > p:empty { min-height: 1.75em; }
+.markdown-body .folio-callout:focus-within { border-color: color-mix(in srgb, var(--folio-accent) 50%, var(--folio-bg)); border-left-color: var(--folio-accent); }
+.folio-callout-emoji {
+  position: absolute; left: 14px; top: 13px; display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
+  border: 1px solid transparent; border-radius: 6px; color: inherit; background: transparent; font: 22px/1 "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+  cursor: pointer; user-select: none; transition: background-color 140ms, border-color 140ms, transform 120ms;
+}
+.folio-callout-emoji:is(:hover, [aria-expanded="true"]):not(:disabled) { background: color-mix(in srgb, var(--folio-accent) 16%, transparent); border-color: var(--folio-line); }
+.folio-callout-emoji:active:not(:disabled) { transform: scale(.96); }
+.folio-callout-emoji:disabled { cursor: default; }
+@media (max-width: 600px) { .markdown-body blockquote.folio-callout { padding-right: 14px; } }
+@media (prefers-reduced-motion: reduce) { .markdown-body blockquote.folio-callout, .folio-callout-emoji { transition: none; } }
 .markdown-body :not(pre) > code, .markdown-body tt {
   padding: 2px 5px;
   border: 1px solid color-mix(in srgb, var(--folio-peach) 20%, var(--folio-bg));

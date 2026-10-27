@@ -188,12 +188,12 @@
     const footer = document.createElement('div'); footer.className = 'folio-emoji-footer';
     const label = document.createElement('span'), hint = document.createElement('span'); hint.textContent = '↵ 插入 · Esc 关闭'; footer.append(label, hint);
     picker.append(header, search, tabs, grid, empty, footer); document.body.append(picker);
-    let anchor, category = 'all', results = [], selected = 0;
+    let anchor, category = 'all', results = [], selected = 0, action = '插入';
     function highlight(index, focus = false) {
       selected = Math.max(0, Math.min(index, results.length - 1));
       Array.from(grid.children).forEach((button, i) => { button.tabIndex = i === selected ? 0 : -1; button.classList.toggle('is-selected', i === selected); });
       label.textContent = results[selected]?.name || '';
-      hint.textContent = results.length ? '↵ 插入 · Esc 关闭' : 'Esc 关闭';
+      hint.textContent = results.length ? `↵ ${action} · Esc 关闭` : 'Esc 关闭';
       if (focus) grid.children[selected]?.focus({ preventScroll: true });
       if (focus) grid.children[selected]?.scrollIntoView({ block: 'nearest' });
     }
@@ -247,7 +247,10 @@
     window.addEventListener('resize', position); window.addEventListener('scroll', position, { passive: true });
     return {
       element: picker,
-      open(range) { anchor = range.cloneRange(); category = 'all'; search.value = ''; picker.hidden = false; render(); search.focus({ preventScroll: true }); },
+      open(range, options = {}) {
+        action = options.action || '插入'; title.textContent = options.title || 'Emoji 表情'; picker.setAttribute('aria-label', options.title || '插入 Emoji 表情');
+        anchor = range.cloneRange(); category = 'all'; search.value = ''; picker.hidden = false; render(); search.focus({ preventScroll: true });
+      },
       close() { picker.hidden = true; anchor = null; }
     };
   };

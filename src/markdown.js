@@ -5,6 +5,29 @@ const highlight = require('highlight.js');
 const codeLanguages = highlight.listLanguages().map(id => ({ id, name: highlight.getLanguage(id).name || id, aliases: highlight.getLanguage(id).aliases || [] }));
 const alertNames = { NOTE: '提示', TIP: '建议', IMPORTANT: '重要', WARNING: '警告', CAUTION: '注意' };
 
+function addCallouts(md) {
+  md.core.ruler.after('inline', 'folio_callouts', state => {
+    for (let i = 0; i < state.tokens.length - 3; i++) {
+      const open = state.tokens[i], paragraph = state.tokens[i + 1], inline = state.tokens[i + 2];
+      if (open.type !== 'blockquote_open' || paragraph.type !== 'paragraph_open' || inline.type !== 'inline') continue;
+      const match = /^\[!CALLOUT\](?:[ \t]+([^\n]*))?(?:\n|$)/i.exec(inline.content);
+      if (!match) continue;
+      const emoji = match[1]?.trim() || '🌈';
+      if (emoji.length > 32 || !/[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(emoji)
+        || [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(emoji)].length !== 1) continue;
+      open.attrJoin('class', 'folio-callout'); open.attrSet('data-callout-emoji', emoji);
+      inline.content = inline.content.slice(match[0].length); inline.children = [];
+      state.md.inline.parse(inline.content, state.md, state.env, inline.children);
+      // The marker is metadata, not an empty paragraph above the content. Keep one paragraph for an empty card.
+      if (!inline.content && state.tokens[i + 4]?.type !== 'blockquote_close') state.tokens.splice(i + 1, 3);
+      const icon = new state.Token('folio_callout_icon', '', 0); icon.meta = { emoji };
+      state.tokens.splice(i + 1, 0, icon); i++;
+    }
+  });
+  md.renderer.rules.folio_callout_icon = (tokens, index) => `<button type="button" class="folio-callout-emoji" contenteditable="false" disabled `
+    + `aria-label="更换高亮块表情" title="更换表情" aria-haspopup="dialog">${md.utils.escapeHtml(tokens[index].meta.emoji)}</button>`;
+}
+
 function addAlerts(md) {
   md.core.ruler.after('inline', 'folio_alerts', state => {
     for (let i = 0; i < state.tokens.length - 2; i++) {
@@ -140,8 +163,10 @@ function addEditableBlocks(md) {
       if (end >= state.tokens.length) { output.push(token); continue; }
       const finish = Math.max(token.map[1], ...state.tokens.slice(i, end + 1).map(item => item.map?.[1] || 0));
       const source = lines.slice(token.map[0], finish).join('\n');
+      const callout = token.attrGet('class')?.split(' ').includes('folio-callout');
+      const editableSource = callout ? source.replace(/^(\s*>[ \t]*)\[!CALLOUT\][^\n]*(?:\n|$)/i, '$1') : source;
       const rich = ['paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open', 'blockquote_open'].includes(token.type)
-        && !/(<\/?[a-z!]|\[\^|\]\s*\[|\$|^\s*>?\s*\[!|\*\[|!\[)/im.test(editableStyleSource(source))
+        && !/(<\/?[a-z!]|\[\^|\]\s*\[|\$|^\s*>?\s*\[!|\*\[|!\[)/im.test(editableStyleSource(editableSource))
         && !(Object.keys(state.env.references || {}).length && /\[[^\]]+\](?!\()/.test(source))
         && !state.tokens.slice(i, end + 1).some(item => ['fence', 'code_block', 'table_open', 'html_block'].includes(item.type)
           || item.children?.some(child => ['link_open', 'image'].includes(child.type) && child.meta?.isReference));
@@ -183,6 +208,7 @@ function extendMarkdownIt(md) {
   md.use(require('markdown-it-abbr'));
   addTasks(md);
   addAlerts(md);
+  addCallouts(md);
 
   const openParagraph = md.renderer.rules.paragraph_open || ((tokens, index, options, env, self) => self.renderToken(tokens, index, options));
   md.renderer.rules.paragraph_open = (tokens, index, ...args) => {

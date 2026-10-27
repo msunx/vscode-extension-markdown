@@ -33,7 +33,7 @@
     if (!(node instanceof Element)) return '';
     const inner = () => Array.from(node.childNodes, inline).join('');
     const tag = node.tagName.toLowerCase();
-    if (node.matches('.folio-copy, .folio-code-header, .folio-block-tools, input')) return '';
+    if (node.matches('.folio-copy, .folio-code-header, .folio-block-tools, button, input')) return '';
     if (tag === 'br') return '  \n';
     if (tag === 'strong' || tag === 'b') return marked('**', inner(), node);
     if (tag === 'em' || tag === 'i') return marked('*', inner(), node);
@@ -96,8 +96,11 @@
         return marker + lines.map((line, i) => i && line ? ' '.repeat(marker.length) + line : line).join('\n');
       }).join(loose ? '\n\n' : '\n') + '\n\n';
     }
-    if (tag === 'blockquote') return Array.from(node.childNodes).filter(child => child.nodeType !== Node.TEXT_NODE || child.textContent.trim())
-      .map(serialize).join('').trimEnd().split('\n').map(line => '> ' + line).join('\n') + '\n\n';
+    if (tag === 'blockquote') {
+      const body = Array.from(node.childNodes).filter(child => child.nodeType !== Node.TEXT_NODE || child.textContent.trim()).map(serialize).join('').trimEnd();
+      const marker = node.matches('.folio-callout') ? `> [!CALLOUT] ${node.dataset.calloutEmoji || '🌈'}\n` : '';
+      return marker + body.split('\n').map(line => '> ' + line).join('\n') + '\n\n';
+    }
     if (tag === 'hr') return '---\n\n';
     if (tag === 'div' && !Array.from(node.children).some(child => /^(P|H[1-6]|UL|OL|PRE|BLOCKQUOTE|DIV|HR|TABLE)$/.test(child.tagName))) return inline(node) + '\n\n';
     return Array.from(node.childNodes, serialize).join('');
@@ -116,6 +119,7 @@
     ['bullet', '无序列表', 'M6 6a1 1 0 1 0-2 0 1 1 0 0 0 2 0M6 12a1 1 0 1 0-2 0 1 1 0 0 0 2 0M6 18a1 1 0 1 0-2 0 1 1 0 0 0 2 0M10 6h11M10 12h11M10 18h11', 'unordered bullet list wuxu', '基础', 'teal'],
     ['code', '代码块', 'M8 6l-6 6 6 6M16 6l6 6-6 6M14 4l-4 16', 'code daima', '基础', 'green'],
     ['quote', '引用', 'M10 6H4v7h6V6ZM10 13c0 4-2 6-5 6M20 6h-6v7h6V6ZM20 13c0 4-2 6-5 6', 'blockquote quote yinyong', '基础', 'teal'],
+    ['callout', '高亮块', 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM8 8h.01M12 8h5M7 13h10M7 17h7', 'callout highlight gaoliang 提示 强调', '基础', 'accent'],
     ['divider', '分隔线', 'M3 12h7M14 12h7M12 10l2 2-2 2-2-2 2-2Z', 'divider horizontal fengexian', '基础', 'peach'],
     ['link', '链接', 'M10 13a4 4 0 0 0 6 0l4-4a4 4 0 0 0-6-6l-2 2M14 11a4 4 0 0 0-6 0l-4 4a4 4 0 0 0 6 6l2-2', 'link lianjie', '常用', 'blue'],
     ['file', '项目文件', 'M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6ZM14 3v6h6M8 13h8M8 17h5', 'file project workspace wenjian xiangmu 文件链接', '常用', 'teal'],
@@ -227,6 +231,7 @@
       if (state().draft?.markdown && !pending.size && !active) { recovery.hidden = false; showError('有一份未同步的草稿，可复制后继续编辑，或放弃草稿并刷新。'); }
       blocks.refresh(); for (const resolve of renderWaiters) resolve(true); renderWaiters.clear();
       codes.enhance(); enhanceImages();
+      for (const button of main.querySelectorAll('.folio-callout-emoji')) button.disabled = !writable || button.closest('.folio-block').dataset.editMode !== 'rich';
     }
     async function prepareMove() {
       const wasEditing = !!active;
@@ -590,7 +595,7 @@
       if (!selection.isCollapsed || !selection.rangeCount) return false;
       const node = selection.anchorNode?.nodeType === Node.ELEMENT_NODE ? selection.anchorNode : selection.anchorNode?.parentElement;
       const item = node?.closest('li');
-      if (!item || !active.content.contains(item) || node.closest('pre, blockquote')) return false;
+      if (!item || !active.content.contains(item) || node.closest('pre, blockquote:not(.folio-callout)')) return false;
       const empty = !item.textContent.trim() && !item.querySelector('ul, ol, img, pre, table, hr');
       if (empty) {
         // Chromium's native empty-item Enter can lift the previous child list out of its parent.
@@ -709,7 +714,8 @@
       removal.remove();
       // Remove empty list/quote wrappers, but retain following items and nested content.
       let empty = container;
-      while (empty !== active.content && !empty.textContent.trim() && !empty.querySelector('li, input, img, pre, table, hr, p, h1, h2, h3, h4, h5, h6')) {
+      while (empty !== active.content && (!empty.textContent.trim() || empty.matches('.folio-callout') && [...empty.children].every(child => child.matches('.folio-callout-emoji')))
+        && !empty.querySelector('li, input, img, pre, table, hr, p, h1, h2, h3, h4, h5, h6')) {
         const parent = empty.parentElement; empty.remove(); empty = parent;
       }
       active.input.focus({ preventScroll: true });
@@ -801,7 +807,9 @@
       const query = match ? match[1].toLowerCase() : '';
       const inlineMode = /^(TH|TD)$/.test(location.line.tagName) || force && !match && Boolean(location.line.textContent.trim());
       const standalone = location.line.parentElement === active.content && /^(P|H[1-6])$/.test(location.line.tagName);
-      const items = modules.filter(item => (!inlineMode || ['link', 'file', 'emoji'].includes(item[0])) && (!['template', 'image'].includes(item[0]) || standalone)
+      const inCallout = location.line.closest('.folio-callout');
+      const items = modules.filter(item => (!inlineMode || ['link', 'file', 'emoji'].includes(item[0])) && (!['template', 'image', 'callout'].includes(item[0]) || standalone)
+        && (!inCallout || !['code', 'table', 'divider', 'quote'].includes(item[0]))
         && `${item[0]} ${item[1]} ${item[3]}`.toLowerCase().includes(query));
       const selected = menuState?.query === query ? Math.min(menuState.selected, items.length - 1) : 0;
       const opening = menu.hidden;
@@ -888,8 +896,13 @@
         node = document.createElement(id === 'ordered' ? 'ol' : 'ul'); const item = document.createElement('li');
         if (id === 'task') { item.className = 'task-list-item'; const check = document.createElement('input'); check.type = 'checkbox'; check.className = 'task-list-item-checkbox'; item.append(check); }
         item.append(document.createTextNode(remainder)); if (!remainder) item.append(document.createElement('br')); node.append(item);
-      } else if (id === 'quote') {
+      } else if (id === 'quote' || id === 'callout') {
         node = document.createElement('blockquote'); const paragraph = document.createElement('p'); paragraph.textContent = remainder; if (!remainder) paragraph.append(document.createElement('br')); node.append(paragraph);
+        if (id === 'callout') {
+          node.className = 'folio-callout'; node.dataset.calloutEmoji = '🌈';
+          const button = document.createElement('button'); button.type = 'button'; button.className = 'folio-callout-emoji'; button.contentEditable = 'false'; button.textContent = '🌈';
+          button.setAttribute('aria-label', '更换高亮块表情'); button.setAttribute('aria-haspopup', 'dialog'); button.title = '更换表情'; node.prepend(button);
+        }
       } else if (id === 'code') {
         node = document.createElement('pre'); const code = document.createElement('code'); code.textContent = remainder || '\n'; node.append(code);
       } else if (id === 'divider') {
@@ -993,6 +1006,11 @@
     }
     function closeEmoji(restore = false) {
       const request = emojiRequest; emojiRequest = null; emojiPicker.close();
+      if (request?.callout) {
+        const button = request.callout.querySelector('.folio-callout-emoji'); button?.setAttribute('aria-expanded', 'false');
+        if (restore && button?.isConnected) button.focus({ preventScroll: true });
+        return;
+      }
       if (!restore || !request || !validInsertion(request)) return;
       active.input.focus({ preventScroll: true });
       const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(request.caret);
@@ -1001,6 +1019,12 @@
       const request = emojiRequest;
       if (!request) return;
       closeEmoji(false);
+      if (request.callout) {
+        if (active !== request.editor || source !== request.source || !request.callout.isConnected || !writable || conflicted) { showError('高亮块已变化，请重新选择表情。'); return; }
+        const before = source, caret = captureCaret(), button = request.callout.querySelector('.folio-callout-emoji');
+        request.callout.dataset.calloutEmoji = value; button.textContent = value; button.focus({ preventScroll: true });
+        sync(); rememberListEdit(before, caret, captureCaret()); return;
+      }
       if (!validInsertion(request)) { showError('插入位置已变化，请重新选择表情。'); return; }
       active.input.focus({ preventScroll: true });
       const text = document.createTextNode(value); request.range.deleteContents(); request.range.insertNode(text);
@@ -1086,6 +1110,14 @@
       if (cell?.closest('table[data-folio-table]') && active?.content.contains(cell)) tables.select(cell);
     });
     main.addEventListener('click', event => {
+      const button = event.target.closest('.folio-callout-emoji');
+      if (button && !button.disabled) {
+        event.preventDefault(); event.stopPropagation();
+        if (!open(button.closest('.folio-block')) || active.raw) return;
+        sync(); closeMenu(); formatting.hide(); const range = document.createRange(); range.selectNode(button);
+        emojiRequest = { editor: active, source, callout: button.closest('.folio-callout') };
+        button.setAttribute('aria-expanded', 'true'); emojiPicker.open(range, { action: '更换', title: '更换高亮块表情' }); return;
+      }
       if (active?.content.contains(event.target) && event.target.closest('label.folio-task-label')) event.preventDefault();
     });
     const placeholderObserver = new MutationObserver(updatePlaceholders);
@@ -1139,6 +1171,14 @@
         && !event.target.closest('input, button, textarea, select')) {
         if (enterList()) { event.preventDefault(); event.stopPropagation(); closeMenu(); return; }
         const location = lineAtCaret();
+        const callout = location?.line.parentElement;
+        if (callout?.matches('.folio-callout') && location.line.tagName === 'P' && !location.line.textContent && !location.line.querySelector(':not(br)')
+          && !location.line.nextElementSibling && window.getSelection().isCollapsed) {
+          event.preventDefault(); const before = source, caret = captureCaret(), paragraph = document.createElement('p'); paragraph.append(document.createElement('br'));
+          callout.after(paragraph); location.line.remove();
+          if ([...callout.children].every(child => child.matches('.folio-callout-emoji'))) callout.remove();
+          caretEnd(paragraph); sync(); rememberListEdit(before, caret, captureCaret()); return;
+        }
         if (location && /^H[1-6]$/.test(location.line.tagName) && window.getSelection().isCollapsed && location.before === location.line.textContent) {
           event.preventDefault(); const p = document.createElement('p'); p.append(document.createElement('br')); location.line.after(p); caretEnd(p); sync(); return;
         }

@@ -32,8 +32,15 @@ async function updateBlock(document, message) {
   const before = message.base.slice(message.start, message.end);
   let prefix = 0;
   while (prefix < before.length && prefix < message.text.length && before[prefix] === message.text[prefix]) prefix++;
+  // Editor ranges must not split an emoji's UTF-16 pair or the two characters of a CRLF newline.
+  const splitsPair = (text, offset) => {
+    const left = text.charCodeAt(offset - 1), right = text.charCodeAt(offset);
+    return left >= 0xd800 && left <= 0xdbff && right >= 0xdc00 && right <= 0xdfff || left === 13 && right === 10;
+  };
+  if (splitsPair(before, prefix) || splitsPair(message.text, prefix)) prefix--;
   let suffix = 0;
   while (suffix < before.length - prefix && suffix < message.text.length - prefix && before[before.length - 1 - suffix] === message.text[message.text.length - 1 - suffix]) suffix++;
+  if (splitsPair(before, before.length - suffix) || splitsPair(message.text, message.text.length - suffix)) suffix--;
   if (prefix === before.length && prefix === message.text.length) return;
   const edit = new vscode.WorkspaceEdit();
   edit.replace(document.uri, new vscode.Range(document.positionAt(message.start + prefix), document.positionAt(message.end - suffix)), message.text.slice(prefix, message.text.length - suffix));
