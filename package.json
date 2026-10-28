@@ -2,7 +2,7 @@
   "name": "folio-markdown",
   "displayName": "Folio · Markdown Preview",
   "description": "暮色多彩 Markdown 编辑预览，支持就地编辑、斜杠模块菜单与交互式 Todo。",
-  "version": "0.19.5",
+  "version": "0.20.1",
   "publisher": "muyang",
   "author": {
     "name": "muyang"
@@ -44,8 +44,8 @@
     "virtualWorkspaces": true
   },
   "scripts": {
-    "check": "node --check src/properties.js && node --check media/properties.js && node --check src/extension.js && node --check src/markdown.js && node --check media/preview.js && node --check src/files.js && node --check src/preview.js && node --check media/editor.js && node --check media/emoji.js && node --check media/table.js && node --check media/blocks.js && node --check src/templates.js && node --check media/templates.js && node --check media/format.js && node --check src/images.js && node --check media/images.js && node --check media/code.js && node --check media/outline.js && node --check media/block-formats.js && node --check media/image-viewer.js",
-    "package": "vsce package --allow-missing-repository --out folio-markdown-0.19.5.vsix"
+    "check": "node --check src/properties.js && node --check media/properties.js && node --check src/extension.js && node --check src/markdown.js && node --check media/preview.js && node --check src/files.js && node --check src/preview.js && node --check media/editor.js && node --check media/emoji.js && node --check media/table.js && node --check media/blocks.js && node --check src/templates.js && node --check media/templates.js && node --check media/format.js && node --check src/images.js && node --check media/images.js && node --check media/code.js && node --check media/outline.js && node --check media/block-formats.js && node --check media/image-viewer.js && node --check src/videos.js && node --check media/videos.js",
+    "package": "vsce package --allow-missing-repository --out folio-markdown-0.20.1.vsix"
   },
   "contributes": {
     "commands": [
@@ -108,6 +108,7 @@
     ],
     "markdown.previewScripts": [
       "./media/image-viewer.js",
+      "./media/videos.js",
       "./media/preview.js"
     ],
     "markdown.markdownItPlugins": true,

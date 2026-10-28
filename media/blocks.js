@@ -6,9 +6,9 @@
     table: 'M3 4h18v16H3ZM3 10h18M10 4v16', code: 'M8 6l-6 6 6 6M16 6l6 6-6 6M14 4l-4 16',
     blockquote: 'M4 6h6v7H4ZM10 13c0 4-2 6-5 6M14 6h6v7h-6ZM20 13c0 4-2 6-5 6',
     hr: 'M3 12h7M14 12h7M12 10l2 2-2 2-2-2Z', image: 'M3 3h18v18H3ZM3 17l6-6 5 5 3-3 4 4M16 7h1',
-    callout: 'M4 4h16v16H4ZM8 8h.01M12 8h5M7 13h10M7 17h7', block: 'M4 4h16v16H4ZM4 10h16'
+    callout: 'M4 4h16v16H4ZM8 8h.01M12 8h5M7 13h10M7 17h7', block: 'M4 4h16v16H4ZM4 10h16', video: 'M3 4h18v16H3ZM10 8l6 4-6 4Z'
   };
-  const labels = { p: '正文', heading: '标题', task: '任务', list: '列表', table: '表格', code: '代码块', blockquote: '引用', callout: '高亮块', hr: '分隔线', image: '图片', block: '内容块' };
+  const labels = { p: '正文', heading: '标题', task: '任务', list: '列表', table: '表格', code: '代码块', blockquote: '引用', callout: '高亮块', hr: '分隔线', image: '图片', video: '视频', block: '内容块' };
   const ownTask = item => item.querySelector(':scope > input.task-list-item-checkbox, :scope > p > input.task-list-item-checkbox');
   const normalize = text => text.replace(/\s+/g, ' ').trim();
   const trimEol = text => text.replace(/\r?\n$/, '');
@@ -80,7 +80,7 @@
         const label = kind === 'task' ? element.querySelector(':scope > .folio-task-label, :scope > p > .folio-task-label') : null;
         const anchor = label || (kind === 'table' ? element.querySelector('table') : null) || element;
         const title = kind === 'table' ? anchor : kind === 'code' ? element.querySelector('code') || element : label || element;
-        const name = normalize(range ? range.toString() : title.textContent);
+        const name = normalize(kind === 'video' ? element.querySelector('video')?.getAttribute('aria-label') || '视频' : range ? range.toString() : title.textContent);
         const unit = { block, element, anchor, kind, start: begin, end: finish, range, depth, name };
         unit.key = `${kind}:${name}`; unit.occurrence = units.filter(other => other.key === unit.key).length;
         units.push(unit);
@@ -108,7 +108,7 @@
             if (!spansLines && ranges.length === end - start && ranges.every(Boolean)) ranges.forEach((range, index) => add(block, element, 'p', start + index, start + index + 1, range));
             else add(block, element, 'p', start, end);
           } else {
-            const kind = element.matches('.folio-callout') ? 'callout' : /^h[1-6]$/.test(tag) ? 'heading' : /^(ul|ol|dl)$/.test(tag) ? 'list'
+            const kind = element.matches('.folio-video') ? 'video' : element.matches('.folio-callout') ? 'callout' : /^h[1-6]$/.test(tag) ? 'heading' : /^(ul|ol|dl)$/.test(tag) ? 'list'
               : element.matches('.folio-table, .folio-table-shell') ? 'table' : element.matches('.folio-code-block, pre') ? 'code'
                 : element.querySelector('img') && tag === 'p' ? 'image' : icons[tag] ? tag : 'block';
             add(block, element, kind, start, end);

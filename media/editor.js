@@ -236,7 +236,7 @@
         block.dataset.sourceEnd = lines[Number(block.dataset.endLine)] ?? source.length;
         const content = block.querySelector('.folio-block-content');
         tables.prepare(content, writable);
-        if (writable) { content.tabIndex = 0; content.setAttribute('aria-label', '编辑此内容'); }
+        if (writable && block.dataset.editMode !== 'video') { content.tabIndex = 0; content.setAttribute('aria-label', '编辑此内容'); }
       }
       if (writable && !source.trim() && !historyCaret?.emptyBlock) insertEmptyBlock();
       if (historyCaret) { restoreCaret(historyCaret); historyCaret = null; }
@@ -362,6 +362,7 @@
       caretEnd(active.content);
     }
     function open(block, focus = false) {
+      if (block.dataset.editMode === 'video') return false;
       if (!writable || conflicted || composing) return false;
       if (active?.block === block) { if (focus) active.input.focus(); return true; }
       finish(false);
@@ -1154,6 +1155,7 @@
     });
     main.addEventListener('paste', paste);
     document.addEventListener('keydown', event => {
+      if (event.target.closest?.('.folio-video')) return;
       if (event.target.closest?.('.folio-properties')) return;
       if (templates.element.open || images.element.open || codes.element.contains(event.target)) return;
       if (event.isComposing || composing) return;

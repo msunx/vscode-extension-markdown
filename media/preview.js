@@ -279,6 +279,7 @@
     }
   }
   function enhanceContent() {
+    window.FolioVideos?.enhance();
     enhanceCode();
     refreshDateHeadings();
     document.querySelectorAll('.folio-copy:not([data-folio-ready])').forEach(button => {

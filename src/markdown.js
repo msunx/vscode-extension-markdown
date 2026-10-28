@@ -3,6 +3,7 @@
 const installed = Symbol.for('muyang.folio.markdown');
 const highlight = require('highlight.js');
 const { addFrontmatter } = require('./properties');
+const { addVideos } = require('./videos');
 const codeLanguages = highlight.listLanguages().map(id => ({ id, name: highlight.getLanguage(id).name || id, aliases: highlight.getLanguage(id).aliases || [] }));
 const alertNames = { NOTE: '提示', TIP: '建议', IMPORTANT: '重要', WARNING: '警告', CAUTION: '注意' };
 
@@ -213,7 +214,8 @@ function addEditableBlocks(md) {
           || item.children?.some(child => ['link_open', 'image'].includes(child.type) && child.meta?.isReference));
       const open = new state.Token('folio_block_open', 'section', 1);
       const image = token.type === 'paragraph_open' && state.tokens[i + 1]?.children?.length === 1 && state.tokens[i + 1].children[0].type === 'image';
-      open.meta = { start: token.map[0], end: finish, mode: token.type === 'fence' ? 'code' : image ? 'image' : token.type === 'table_open' ? 'table' : rich ? 'rich' : 'source', kind: token.tag || token.type };
+      const mode = token.type === 'folio_video' ? 'video' : token.type === 'fence' ? 'code' : image ? 'image' : token.type === 'table_open' ? 'table' : rich ? 'rich' : 'source';
+      open.meta = { start: token.map[0], end: finish, mode, kind: token.tag || token.type };
       output.push(open, ...state.tokens.slice(i, end + 1), new state.Token('folio_block_close', 'section', -1));
       i = end;
     }
@@ -280,6 +282,7 @@ function extendMarkdownIt(md) {
   md.renderer.rules.table_open = (...args) => `<div class="folio-table" tabindex="0" role="region" aria-label="表格，可横向滚动">${openTable(...args)}`;
   md.renderer.rules.table_close = (...args) => `${closeTable(...args)}</div>`;
   addTableSources(md);
+  addVideos(md);
   addEditableBlocks(md);
   return md;
 }
